@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MQTT Web Controller</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            color: #333;
+        }
+       .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 90%;
+            max-width: 400px;
+        }
+        h1 {
+            color: #1a237e;
+            margin-top: 0;
+            font-size: 1.5em;
+        }
+        h2 {
+            color: #555;
+            font-size: 1.1em;
+            margin-bottom: 20px;
+            font-weight: normal;
+        }
+       .status-bar {
+            margin: 20px 0;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+       .status-disconnected {
+            color: #d32f2f; /* Red */
+        }
+       .status-connected {
+            color: #388e3c; /* Green */
+        }
+       .status-connecting {
+            color: #f57c00; /* Orange */
+        }
+       .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        button {
+            padding: 12px 15px;
+            font-size: 1em;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+            font-weight: bold;
+            color: white;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        #connect-btn {
+            grid-column: 1 / -1; /* Span across both columns */
+            background-color: #1976d2; /* Blue */
+        }
+        #connect-btn.connected {
+            background-color: #c62828; /* Red for disconnect */
+        }
+       .motor-btn {
+            background-color: #00796b; /* Teal */
+        }
+       .motor-btn.stop {
+            background-color: #fbc02d; /* Yellow */
+            color: #333;
+        }
+       .notification {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+       .notification.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>大同資工魚菜共生</h1>
+        <h2>總控馬達 => MQTT連線</h2>
+        
+        <div class="status-bar">
+            MQTT狀態: <span id="status-label" class="status-disconnected">尚未連線</span>
+        </div>
+
+        <button id="connect-btn">連線</button>
+        
+        <div class="controls">
+            <button id="btn-fwd-1" class="motor-btn" data-motor="1" data-action="forward" disabled>1號正轉</button>
+            <button id="btn-rev-1" class="motor-btn" data-motor="1" data-action="reverse" disabled>1號反轉</button>
+            <button id="btn-fwd-2" class="motor-btn" data-motor="2" data-action="forward" disabled>2號正轉</button>
+            <button id="btn-rev-2" class="motor-btn" data-motor="2" data-action="reverse" disabled>2號反轉</button>
+        </div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            // --- 配置參數 ---
+            const MQTT_BROKER = "test.mosquitto.org";
+            const MQTT_PORT = 8080; // WebSocket Port
+            const MQTT_CLIENT_ID = "TtuFish001_Web_" + parseInt(Math.random() * 1000);
+            const TOPIC_MOTOR1 = "ttu_fish/motor1";
+            const TOPIC_MOTOR2 = "ttu_fish/motor2";
+
+            // --- 狀態變數 ---
+            let client;
+            let isConnected = false;
+            let motorStates = { '1': 0, '2': 0 }; // 0: stop, 1: forward, 2: reverse
+
+            // --- UI 元素 ---
+            const connectBtn = document.getElementById('connect-btn');
+            const statusLabel = document.getElementById('status-label');
+            const motorButtons = document.querySelectorAll('.motor-btn');
+            const notification = document.getElementById('notification');
+
+            // --- MQTT 事件處理 ---
+
+            function onConnect() {
+                console.log("成功連線至 MQTT Broker!");
+                isConnected = true;
+                
+                // 訂閱主題
+                client.subscribe(TOPIC_MOTOR1);
+                client.subscribe(TOPIC_MOTOR2);
+                console.log(`已訂閱主題: ${TOPIC_MOTOR1} 和 ${TOPIC_MOTOR2}`);
+                
+                updateUI();
+            }
+
+            function onConnectionLost(responseObject) {
+                if (responseObject.errorCode!== 0) {
+                    console.error("連線丟失: " + responseObject.errorMessage);
+                }
+                isConnected = false;
+                motorStates = { '1': 0, '2': 0 }; // 重置狀態
+                updateUI();
+            }
+
+            function onMessageArrived(message) {
+                console.log(`收到訊息: Topic=${message.destinationName}, Payload=${message.payloadString}`);
+                // 此處可擴展用於處理從設備接收的狀態回饋
+            }
+
+            function onFailure(responseObject) {
+                console.error("連線失敗: " + responseObject.errorMessage);
+                isConnected = false;
+                showNotification("連線失敗，請檢查 Broker 設定或網路。");
+                updateUI();
+            }
+
+            // --- 核心功能函式 ---
+
+            function connect() {
+                if (isConnected) return;
+
+                console.log(`正在連線至 ${MQTT_BROKER}:${MQTT_PORT}`);
+                statusLabel.textContent = '連線中...';
+                statusLabel.className = 'status-connecting';
+
+                client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+                
+                // 設定回呼函式
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+                
+                // 連線
+                client.connect({
+                    onSuccess: onConnect,
+                    onFailure: onFailure,
+                    useSSL: false
+                });
+            }
+
+            function disconnect() {
+                if (!isConnected) return;
+                console.log("正在斷開連線...");
+                client.disconnect();
+                isConnected = false; // 立即更新狀態
+                updateUI();
+            }
+
+            function publishMessage(topic, payload) {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+                const message = new Paho.MQTT.Message(payload);
+                message.destinationName = topic;
+                client.send(message);
+                console.log(`已發布訊息: Topic=${topic}, Payload=${payload}`);
+            }
+
+            function handleMotorControl(motor, action) {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+
+                const topic = (motor === '1')? TOPIC_MOTOR1 : TOPIC_MOTOR2;
+                let payload = '0'; // 預設為停止
+                
+                const currentState = motorStates[motor];
+                const actionValue = (action === 'forward')? 1 : 2;
+
+                if (currentState === actionValue) {
+                    // 如果當前狀態與點擊的動作相同（例如正在正轉時點擊正轉），則停止
+                    motorStates[motor] = 0;
+                    payload = '0';
+                } else {
+                    // 否則，切換到新的狀態
+                    motorStates[motor] = actionValue;
+                    payload = (action === 'forward')? '1' : '2';
+                }
+                
+                publishMessage(topic, payload);
+                updateUI();
+            }
+
+            // --- UI 更新與輔助函式 ---
+
+            function updateUI() {
+                // 更新連線按鈕和狀態標籤
+                if (isConnected) {
+                    statusLabel.textContent = '已連線';
+                    statusLabel.className = 'status-connected';
+                    connectBtn.textContent = '斷開連線';
+                    connectBtn.classList.add('connected');
+                } else {
+                    statusLabel.textContent = '尚未連線';
+                    statusLabel.className = 'status-disconnected';
+                    connectBtn.textContent = '連線';
+                    connectBtn.classList.remove('connected');
+                }
+
+                // 更新馬達控制按鈕
+                motorButtons.forEach(btn => {
+                    btn.disabled =!isConnected;
+                    if (isConnected) {
+                        const motor = btn.dataset.motor;
+                        const action = btn.dataset.action;
+                        const currentState = motorStates[motor];
+                        const actionValue = (action === 'forward')? 1 : 2;
+
+                        if (currentState === actionValue) {
+                            btn.textContent = `${motor}號停止`;
+                            btn.classList.add('stop');
+                        } else {
+                            btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                            btn.classList.remove('stop');
+                        }
+                    } else {
+                        // 重置為初始文字
+                        const motor = btn.dataset.motor;
+                        const action = btn.dataset.action;
+                        btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                        btn.classList.remove('stop');
+                    }
+                });
+            }
+            
+            let notificationTimer;
+            function showNotification(message) {
+                notification.textContent = message;
+                notification.classList.add('show');
+                clearTimeout(notificationTimer);
+                notificationTimer = setTimeout(() => {
+                    notification.classList.remove('show');
+                }, 3000);
+            }
+
+            // --- 事件監聽器 ---
+            connectBtn.addEventListener('click', () => {
+                if (isConnected) {
+                    disconnect();
+                } else {
+                    connect();
+                }
+            });
+
+            motorButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    handleMotorControl(btn.dataset.motor, btn.dataset.action);
+                });
+            });
+
+            // --- 初始呼叫 ---
+            updateUI();
+        });
+    </script>
+
+</body>
+</html>
