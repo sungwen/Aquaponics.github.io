@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MQTT Web Controller</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
     
     <style>
         body {
@@ -133,7 +133,8 @@
         window.addEventListener('DOMContentLoaded', () => {
             // --- 配置參數 ---
             const MQTT_BROKER = "test.mosquitto.org";
-            const MQTT_PORT = 8080; // WebSocket Port
+            // [修改 2] 公共 Mosquitto Broker 的 WSS (加密) 端口是 8081
+            const MQTT_PORT = 8081; 
             const MQTT_CLIENT_ID = "TtuFish001_Web_" + parseInt(Math.random() * 1000);
             const TOPIC_MOTOR1 = "ttu_fish/motor1";
             const TOPIC_MOTOR2 = "ttu_fish/motor2";
@@ -164,7 +165,7 @@
             }
 
             function onConnectionLost(responseObject) {
-                if (responseObject.errorCode!== 0) {
+                if (responseObject.errorCode !== 0) {
                     console.error("連線丟失: " + responseObject.errorMessage);
                 }
                 isConnected = false;
@@ -189,11 +190,12 @@
             function connect() {
                 if (isConnected) return;
 
-                console.log(`正在連線至 ${MQTT_BROKER}:${MQTT_PORT}`);
+                console.log(`正在連線至 wss://${MQTT_BROKER}:${MQTT_PORT}`);
                 statusLabel.textContent = '連線中...';
                 statusLabel.className = 'status-connecting';
-
-                client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+                
+                // Paho.MQTT.Client 在新版中是 Paho.Client
+                client = new Paho.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
                 
                 // 設定回呼函式
                 client.onConnectionLost = onConnectionLost;
@@ -203,7 +205,8 @@
                 client.connect({
                     onSuccess: onConnect,
                     onFailure: onFailure,
-                    useSSL: false
+                    // [修改 3] 必須啟用 SSL/TLS 以使用 WSS 安全連線
+                    useSSL: true
                 });
             }
 
@@ -220,7 +223,7 @@
                     showNotification("沒有成功連線MQTT");
                     return;
                 }
-                const message = new Paho.MQTT.Message(payload);
+                const message = new Paho.Message(payload);
                 message.destinationName = topic;
                 client.send(message);
                 console.log(`已發布訊息: Topic=${topic}, Payload=${payload}`);
@@ -262,15 +265,18 @@
                     connectBtn.textContent = '斷開連線';
                     connectBtn.classList.add('connected');
                 } else {
-                    statusLabel.textContent = '尚未連線';
-                    statusLabel.className = 'status-disconnected';
+                    // 如果狀態不是"連線中"，才更新為"尚未連線"
+                    if (statusLabel.className !== 'status-connecting') {
+                        statusLabel.textContent = '尚未連線';
+                        statusLabel.className = 'status-disconnected';
+                    }
                     connectBtn.textContent = '連線';
                     connectBtn.classList.remove('connected');
                 }
 
                 // 更新馬達控制按鈕
                 motorButtons.forEach(btn => {
-                    btn.disabled =!isConnected;
+                    btn.disabled = !isConnected;
                     if (isConnected) {
                         const motor = btn.dataset.motor;
                         const action = btn.dataset.action;
