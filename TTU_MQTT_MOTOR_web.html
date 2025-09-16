@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>大同資工魚菜共生 · MQTT 控制面板（改進版）</title>
+  <!-- Paho MQTT over WebSocket -->
+  <script src="https://unpkg.com/paho-mqtt@1.0.4/paho-mqtt-min.js"></script>
+  <style>
+    /* Simple dark theme using CSS variables */
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --accent: #38bdf8;
+      --danger: #f87171;
+      --warning: #facc15;
+      --ok: #4ade80;
+      --text: #e2e8f0;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      width: 100%;
+      max-width: 900px;
+      padding: 1rem;
+    }
+    .panel {
+      background-color: var(--panel);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    input, button {
+      padding: 0.5rem;
+      border-radius: 4px;
+      border: none;
+      margin-right: 0.5rem;
+    }
+    input {
+      background-color: #334155;
+      color: var(--text);
+    }
+    button {
+      cursor: pointer;
+      color: #fff;
+    }
+    .btn-ok { background-color: var(--ok); }
+    .btn-danger { background-color: var(--danger); }
+    .btn-warning { background-color: var(--warning); }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .status-dot {
+      width: 0.75rem;
+      height: 0.75rem;
+      border-radius: 50%;
+      background-color: var(--danger);
+    }
+    .status.connected .status-dot {
+      background-color: var(--ok);
+    }
+    #log {
+      width: 100%;
+      height: 200px;
+      background-color: #1e293b;
+      border-radius: 4px;
+      padding: 0.5rem;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      white-space: pre-line;
+    }
+    iframe {
+      width: 100%;
+      height: 400px;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>大同資工魚菜共生 · MQTT 控制面板</h1>
+    <!-- Connection panel -->
+    <div class="panel">
+      <h2>連線設定</h2>
+      <input id="host" placeholder="Host" value="test.mosquitto.org" />
+      <input id="port" placeholder="WebSocket Port" value="8081" type="number" style="width:100px" />
+      <input id="clientId" placeholder="Client ID" value="" />
+      <button id="btnConnect" class="btn-warning">MQTT 連線</button>
+      <div style="margin-top:0.5rem;">
+        <input id="topic1" placeholder="Topic 1" value="ttu_fish/motor1" />
+        <input id="topic2" placeholder="Topic 2" value="ttu_fish/motor2" />
+      </div>
+      <p style="font-size:0.8rem; opacity:0.8;">提示：瀏覽器必須連到支援 WebSocket 的 MQTT 伺服器 (例如 port 8080/8081)。</p>
+    </div>
+    <!-- Status panel -->
+    <div class="panel">
+      <h2>狀態</h2>
+      <div id="status" class="status"><span class="status-dot"></span><span id="statusText">尚未連線</span></div>
+      <button id="btnClearLog" class="btn-warning" style="margin-top:0.5rem;">清空訊息</button>
+      <div id="log"></div>
+    </div>
+    <!-- Control panels -->
+    <div class="panel">
+      <h2>馬達控制 — 馬達 #1</h2>
+      <div>Topic: <span id="label1">ttu_fish/motor1</span></div>
+      <button id="m1Fwd" class="btn-ok">1號正轉</button>
+      <button id="m1Rev" class="btn-danger">1號反轉</button>
+      <button id="m1Toggle" class="btn-warning">1號正反轉</button>
+    </div>
+    <div class="panel">
+      <h2>馬達控制 — 馬達 #2</h2>
+      <div>Topic: <span id="label2">ttu_fish/motor2</span></div>
+      <button id="m2Fwd" class="btn-ok">2號正轉</button>
+      <button id="m2Rev" class="btn-danger">2號反轉</button>
+      <button id="m2Toggle" class="btn-warning">2號正反轉</button>
+    </div>
+    <!-- Embedded external stream -->
+    <div class="panel">
+      <h2>即時影像</h2>
+      <iframe src="https://www.homeyes.com.tw/site1/fish.php?uid=SSAE-029609-FDEBC&amp;box=0&amp;r=rtsp%3A%2F%2Fwww.homeyes.com.tw%3A7554%2F22" allowfullscreen></iframe>
+    </div>
+  </div>
+  <script>
+    let client = null;
+    let isConnected = false;
+
+    function log(msg, type = "") {
+      const logEl = document.getElementById("log");
+      const now = new Date().toLocaleTimeString();
+      logEl.textContent += `\n${now} [${type || 'LOG'}] ${msg}`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function updateStatus(text, connected) {
+      const statusEl = document.getElementById("status");
+      document.getElementById("statusText").textContent = text;
+      statusEl.classList.toggle('connected', connected);
+    }
+
+    // Connect or disconnect
+    document.getElementById("btnConnect").addEventListener("click", () => {
+      if (isConnected) {
+        disconnect();
+      } else {
+        connect();
+      }
+    });
+
+    document.getElementById("btnClearLog").addEventListener("click", () => {
+      document.getElementById("log").textContent = "";
+    });
+
+    function connect() {
+      const host = document.getElementById("host").value.trim();
+      const port = parseInt(document.getElementById("port").value.trim(), 10);
+      const clientId = document.getElementById("clientId").value.trim() || ("TTU_FISH_" + Math.random().toString(16).slice(2));
+      // Determine protocol based on page scheme
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      if (!host || !port) {
+        log("請輸入 Broker 主機與 WebSocket 連接埠", "ERR");
+        return;
+      }
+      log(`嘗試連線到 ${protocol}://${host}:${port} ...`);
+      client = new Paho.MQTT.Client(host, Number(port), "/mqtt", clientId);
+      client.onConnectionLost = (resp) => {
+        isConnected = false;
+        updateStatus("MQTT 中斷", false);
+        log(`連線中斷: ${resp.errorMessage || '未知原因'}`, "ERR");
+      };
+      client.onMessageArrived = (message) => {
+        const topic = message.destinationName;
+        const payload = message.payloadString;
+        log(`收到 ${topic} – ${payload}`);
+      };
+      const options = {
+        cleanSession: true,
+        useSSL: protocol === 'wss',
+        timeout: 10,
+        onSuccess: () => {
+          isConnected = true;
+          updateStatus("MQTT 已連線", true);
+          log("連線成功", "OK");
+          // subscribe topics
+          const t1 = document.getElementById("topic1").value || "ttu_fish/motor1";
+          const t2 = document.getElementById("topic2").value || "ttu_fish/motor2";
+          client.subscribe(t1, { qos: 0 });
+          client.subscribe(t2, { qos: 0 });
+          document.getElementById("label1").textContent = t1;
+          document.getElementById("label2").textContent = t2;
+          log(`已訂閱: ${t1}, ${t2}`);
+        },
+        onFailure: (e) => {
+          isConnected = false;
+          updateStatus("MQTT 連線失敗", false);
+          log(`連線失敗: ${e.errorMessage || '未知原因'}`, "ERR");
+        }
+      };
+      client.connect(options);
+    }
+
+    function disconnect() {
+      if (client) {
+        client.disconnect();
+      }
+      isConnected = false;
+      updateStatus("MQTT 已離線", false);
+      log("已中斷連線");
+    }
+
+    // Publish helper
+    function publish(topic, payload) {
+      if (!isConnected) {
+        log("沒有成功連線 MQTT", "ERR");
+        return false;
+      }
+      const msg = new Paho.MQTT.Message(String(payload));
+      msg.destinationName = topic;
+      client.send(msg);
+      log(`送出 ${topic} – ${payload}`, "OK");
+      return true;
+    }
+
+    // Motor control button helper
+    function bindMotor(btnId, topicLabelId, startPayload, stopPayload) {
+      const btn = document.getElementById(btnId);
+      let running = false;
+      const getTopic = () => document.getElementById(topicLabelId).textContent;
+      const startLabel = btn.textContent;
+      const stopLabel = btn.textContent.replace(/正轉|反轉|正反轉/, '停止');
+      btn.addEventListener("click", () => {
+        const topic = getTopic();
+        if (!running) {
+          if (publish(topic, startPayload)) {
+            running = true;
+            btn.textContent = stopLabel;
+          }
+        } else {
+          if (publish(topic, stopPayload)) {
+            running = false;
+            btn.textContent = startLabel;
+          }
+        }
+      });
+    }
+
+    // Bind motor buttons
+    bindMotor('m1Fwd', 'label1', '1', '0');
+    bindMotor('m1Rev', 'label1', '2', '0');
+    bindMotor('m1Toggle', 'label1', '3', '0');
+    bindMotor('m2Fwd', 'label2', '1', '0');
+    bindMotor('m2Rev', 'label2', '2', '0');
+    bindMotor('m2Toggle', 'label2', '3', '0');
+  </script>
+</body>
+</html>
