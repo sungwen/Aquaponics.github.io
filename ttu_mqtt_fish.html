@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MQTT Relay Controller (對齊 ESP 設定)</title>
+  <title>MQTT 控制面板（馬達 & 繼電器獨立連線）</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
   <style>
     :root { --bg:#f0f2f5; --card:#fff; --text:#333; --primary:#1976d2; --danger:#c62828; --ok:#2e7d32; --muted:#607d8b; }
     body { margin:0; padding:20px; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
-    .wrap { max-width:980px; margin:0 auto; display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+    .wrap { max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
     .card { background:var(--card); border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.08); padding:20px; }
     h1 { font-size:1.4rem; margin:0 0 12px; color:#1a237e; }
     h2 { font-size:1.05rem; margin:0 0 12px; color:#455a64; }
@@ -17,7 +17,7 @@
     input[type="text"],input[type="number"],input[type="password"]{
       width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:.95rem;
     }
-    .inline { display:flex; align-items:center; gap:10px; }
+    .inline { display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
     .hint { font-size:.85rem; color:var(--muted); }
     .status { font-weight:700; }
     .status.ok { color:var(--ok); }
@@ -34,96 +34,115 @@
     .dot.on { background:var(--ok); }
     .dot.off { background:var(--danger); }
     code { background:#eef3f7; padding:2px 6px; border-radius:6px; }
-    .footer { grid-column: 1/-1; text-align:center; color:var(--muted); font-size:.9rem; }
-    @media (max-width:900px){ .wrap { grid-template-columns: 1fr; } }
+    .full { grid-column:1/-1; }
+    @media (max-width:1000px){ .wrap{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <!-- 連線設定（對齊 ESP 的 mqttCfg 結構） -->
+    <!-- ====== 馬達：原本的區塊（獨立 MQTT 連線） ====== -->
     <div class="card">
-      <h1>連線設定（對齊 ESP `mqttCfg`）</h1>
+      <h1>總控馬達（獨立 MQTT 連線）</h1>
+      <div style="margin:8px 0;">
+        狀態：<span id="motorConn" class="status bad">尚未連線</span>
+      </div>
+      <div class="inline" style="gap:10px; margin-bottom:8px;">
+        <button id="motorConnect">馬達連線</button>
+        <button id="motorDisconnect" class="danger" disabled>馬達斷線</button>
+      </div>
+      <div class="hint" id="motorInfo"></div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;"/>
+      <h2>控制</h2>
+      <div class="inline" style="gap:10px; margin-bottom:6px;">
+        <button class="secondary" id="btn-fwd-1" data-motor="1" data-action="forward" disabled>1號正轉</button>
+        <button class="secondary" id="btn-rev-1" data-motor="1" data-action="reverse" disabled>1號反轉</button>
+        <button class="secondary" id="btn-fwd-2" data-motor="2" data-action="forward" disabled>2號正轉</button>
+        <button class="secondary" id="btn-rev-2" data-motor="2" data-action="reverse" disabled>2號反轉</button>
+      </div>
+      <p class="hint">
+        馬達主題：<code>ttu_fish/motor1</code>, <code>ttu_fish/motor2</code><br/>
+        （如需自訂，請改動程式內常數）
+      </p>
+    </div>
+
+    <!-- ====== 繼電器：獨立的 MQTT 連線與設定 ====== -->
+    <div class="card">
+      <h1>繼電器（獨立 MQTT 連線）</h1>
       <div class="row">
         <div>
-          <label>Broker 主機（如：test.mosquitto.org 或 192.168.1.10）</label>
-          <input id="broker" type="text" placeholder="e.g. test.mosquitto.org"/>
+          <label>Broker</label>
+          <input id="rel_broker" type="text" placeholder="e.g. test.mosquitto.org"/>
         </div>
         <div>
-          <label>WebSocket 連接埠（WS/WSS）</label>
-          <input id="port" type="number" placeholder="e.g. 8080 / 8081"/>
+          <label>WebSocket Port</label>
+          <input id="rel_port" type="number" placeholder="e.g. 8081"/>
         </div>
       </div>
       <div class="row">
         <div>
-          <label>使用者（MQTT User，可留空）</label>
-          <input id="user" type="text" placeholder="可留空"/>
+          <label>MQTT User（可留空）</label>
+          <input id="rel_user" type="text"/>
         </div>
         <div>
-          <label>密碼（MQTT Pass，可留空）</label>
-          <input id="pass" type="password" placeholder="可留空"/>
+          <label>MQTT Pass（可留空）</label>
+          <input id="rel_pass" type="password"/>
         </div>
       </div>
       <div class="row">
         <div>
           <label>Command Topic（發佈 ON/OFF/TOGGLE）</label>
-          <input id="topicCmd" type="text" placeholder="e.g. ttu_fish/relay/cmd"/>
+          <input id="rel_topic_cmd" type="text" placeholder="ttu_fish/relay/cmd"/>
         </div>
         <div>
-          <label>Status Topic（訂閱，ESP 端 retain=TRUE）</label>
-          <input id="topicStatus" type="text" placeholder="e.g. ttu_fish/relay/status"/>
+          <label>Status Topic（訂閱，ESP retain=TRUE）</label>
+          <input id="rel_topic_status" type="text" placeholder="ttu_fish/relay/status"/>
         </div>
       </div>
       <div class="row">
         <div class="inline">
-          <input id="useSSL" type="checkbox"/>
-          <label for="useSSL">使用 TLS（WSS）</label>
+          <input id="rel_tls" type="checkbox"/>
+          <label for="rel_tls">使用 TLS（WSS）</label>
         </div>
         <div>
-          <label>WebSocket Path（多數為 /mqtt）</label>
-          <input id="wsPath" type="text" placeholder="/mqtt"/>
+          <label>WebSocket Path</label>
+          <input id="rel_path" type="text" placeholder="/mqtt"/>
         </div>
       </div>
-      <div class="inline" style="margin-top:12px; gap:10px;">
-        <button id="save">儲存設定</button>
-        <button id="reset" class="secondary">清空設定</button>
-      </div>
-      <p class="hint" style="margin-top:10px;">
-        提示：此頁只會對 <code>Command Topic</code> 發佈指令（不使用 retained），
-        狀態以 <code>Status Topic</code> 由裝置回報（retained=TRUE）。<br/>
-        這正對齊你的 ESP 端 <code>publishStatus()</code> 與 <code>mqttCallback()</code> 設計。
-      </p>
-    </div>
 
-    <!-- 連線＆狀態 -->
-    <div class="card">
-      <h1>MQTT 連線</h1>
+      <div class="inline" style="gap:10px; margin-top:8px;">
+        <button id="rel_save" class="secondary">儲存設定</button>
+        <button id="rel_reset" class="secondary">清空設定</button>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;"/>
       <div style="margin:8px 0;">
-        狀態：<span id="connStatus" class="status bad">尚未連線</span>
+        狀態：<span id="rel_conn" class="status bad">尚未連線</span>
       </div>
-      <div class="inline" style="gap:10px; margin-bottom:10px;">
-        <button id="btnConnect">連線</button>
-        <button id="btnDisconnect" class="danger" disabled>斷線</button>
+      <div class="inline" style="gap:10px; margin-bottom:8px;">
+        <button id="rel_connect">繼電器連線</button>
+        <button id="rel_disconnect" class="danger" disabled>繼電器斷線</button>
       </div>
-      <div class="hint" id="info"></div>
-      <hr style="margin:18px 0; border:none; border-top:1px solid #eee;"/>
-      <h2>Relay 狀態</h2>
+      <div class="hint" id="rel_info"></div>
+
+      <h2 style="margin-top:14px;">Relay 狀態</h2>
       <div style="font-size:1.1rem; margin:6px 0 12px;">
-        <span id="relayDot" class="dot"></span>
-        <span id="relayText">未知（等待狀態）</span>
+        <span id="rel_dot" class="dot"></span>
+        <span id="rel_text">未知（等待狀態）</span>
       </div>
       <div class="inline" style="gap:10px;">
-        <button id="btnOn"  class="secondary" disabled>ON</button>
-        <button id="btnOff" class="secondary" disabled>OFF</button>
-        <button id="btnToggle" disabled>TOGGLE</button>
+        <button id="rel_on"  class="secondary" disabled>ON</button>
+        <button id="rel_off" class="secondary" disabled>OFF</button>
+        <button id="rel_toggle" disabled>TOGGLE</button>
       </div>
       <p class="hint" style="margin-top:10px;">
-        訂閱：<code id="showTopicStatus"></code><br/>
-        發佈：<code id="showTopicCmd"></code>
+        訂閱：<code id="show_rel_status"></code><br/>
+        發佈：<code id="show_rel_cmd"></code>
       </p>
     </div>
 
-    <!-- （可選）你的影像框 -->
-    <div class="card" style="grid-column:1/-1;">
+    <!-- 你的影像畫面 -->
+    <div class="card full">
       <h2>即時影像畫面</h2>
       <iframe
         style="width:100%; height:460px; border:1px solid #ddd; border-radius:12px; background:#000;"
@@ -131,189 +150,225 @@
         title="Live Video Stream" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen>
       </iframe>
     </div>
-
-    <div class="footer">前端設定已對齊 ESP8266 端設計：Command Topic 發指令；Status Topic 讀取 retained 狀態。</div>
   </div>
 
   <script>
-    // =============================
-    // 儲存/讀取設定（localStorage）
-    // =============================
-    const els = {
-      broker: document.getElementById('broker'),
-      port: document.getElementById('port'),
-      user: document.getElementById('user'),
-      pass: document.getElementById('pass'),
-      topicCmd: document.getElementById('topicCmd'),
-      topicStatus: document.getElementById('topicStatus'),
-      useSSL: document.getElementById('useSSL'),
-      wsPath: document.getElementById('wsPath'),
-      save: document.getElementById('save'),
-      reset: document.getElementById('reset'),
-      btnConnect: document.getElementById('btnConnect'),
-      btnDisconnect: document.getElementById('btnDisconnect'),
-      connStatus: document.getElementById('connStatus'),
-      info: document.getElementById('info'),
-      showTopicStatus: document.getElementById('showTopicStatus'),
-      showTopicCmd: document.getElementById('showTopicCmd'),
-      relayDot: document.getElementById('relayDot'),
-      relayText: document.getElementById('relayText'),
-      btnOn: document.getElementById('btnOn'),
-      btnOff: document.getElementById('btnOff'),
-      btnToggle: document.getElementById('btnToggle'),
+    // =========================================
+    // 馬達：使用獨立客戶端 clientMotor
+    // =========================================
+    const MOTOR_BROKER = "test.mosquitto.org";
+    const MOTOR_PORT   = 8081;     // WSS
+    const MOTOR_USESSL = true;
+    const MOTOR_PATH   = "/mqtt";
+    const TOPIC_MOTOR1 = "ttu_fish/motor1";
+    const TOPIC_MOTOR2 = "ttu_fish/motor2";
+
+    const mEls = {
+      conn: document.getElementById('motorConn'),
+      info: document.getElementById('motorInfo'),
+      btnConnect: document.getElementById('motorConnect'),
+      btnDisconnect: document.getElementById('motorDisconnect'),
+      btns: [
+        document.getElementById('btn-fwd-1'),
+        document.getElementById('btn-rev-1'),
+        document.getElementById('btn-fwd-2'),
+        document.getElementById('btn-rev-2'),
+      ],
     };
+    let clientMotor = null;
+    let motorConnected = false;
+    const motorStates = { '1':0, '2':0 }; // 0 stop, 1 fwd, 2 rev
 
-    const LS_KEY = 'mqtt-relay-ui';
-
-    function loadSettings() {
-      const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-      els.broker.value = s.broker ?? 'test.mosquitto.org';
-      els.port.value = s.port ?? 8081;
-      els.user.value = s.user ?? '';
-      els.pass.value = s.pass ?? '';
-      els.topicCmd.value = s.topicCmd ?? 'ttu_fish/relay/cmd';
-      els.topicStatus.value = s.topicStatus ?? 'ttu_fish/relay/status';
-      els.useSSL.checked = s.useSSL ?? true;
-      els.wsPath.value = s.wsPath ?? '/mqtt';
-      reflectTopicHints();
+    function setMotorUI(connected){
+      motorConnected = connected;
+      mEls.conn.textContent = connected ? '已連線' : '尚未連線';
+      mEls.conn.className = 'status ' + (connected ? 'ok' : 'bad');
+      mEls.btnConnect.disabled = connected;
+      mEls.btnDisconnect.disabled = !connected;
+      mEls.btns.forEach(b=> b.disabled = !connected);
     }
-    function saveSettings() {
-      const s = {
-        broker: els.broker.value.trim(),
-        port: parseInt(els.port.value,10) || 0,
-        user: els.user.value,
-        pass: els.pass.value,
-        topicCmd: els.topicCmd.value.trim(),
-        topicStatus: els.topicStatus.value.trim(),
-        useSSL: !!els.useSSL.checked,
-        wsPath: els.wsPath.value.trim() || '/mqtt',
+    function flashMotorInfo(msg){ mEls.info.textContent = msg; setTimeout(()=>mEls.info.textContent='',2500); }
+
+    function motorConnect(){
+      clientMotor = new Paho.Client(MOTOR_BROKER, Number(MOTOR_PORT), MOTOR_PATH, 'web_motor_'+Math.floor(Math.random()*999999));
+      clientMotor.onConnectionLost = (res)=>{
+        setMotorUI(false);
+        if(res.errorCode!==0) flashMotorInfo('連線丟失：'+res.errorMessage);
       };
-      localStorage.setItem(LS_KEY, JSON.stringify(s));
-      reflectTopicHints();
-      flashInfo('設定已儲存');
-    }
-    function resetSettings() {
-      localStorage.removeItem(LS_KEY);
-      loadSettings();
-      flashInfo('設定已清空並套用預設值');
-    }
-    function reflectTopicHints() {
-      els.showTopicCmd.textContent = els.topicCmd.value.trim();
-      els.showTopicStatus.textContent = els.topicStatus.value.trim();
-    }
-
-    els.save.addEventListener('click', saveSettings);
-    els.reset.addEventListener('click', resetSettings);
-    loadSettings();
-
-    // =============================
-    // MQTT 連線 & Relay 控制
-    // =============================
-    let client = null;
-    let isConnected = false;
-    let relayState = null; // true=ON, false=OFF, null=未知
-
-    function setConnUI(connected) {
-      isConnected = connected;
-      els.btnConnect.disabled = connected;
-      els.btnDisconnect.disabled = !connected;
-      els.btnOn.disabled = !connected;
-      els.btnOff.disabled = !connected;
-      els.btnToggle.disabled = !connected;
-      els.connStatus.textContent = connected ? '已連線' : '尚未連線';
-      els.connStatus.className = 'status ' + (connected ? 'ok':'bad');
-    }
-    function setRelayUI(state) {
-      relayState = state;
-      els.relayDot.classList.remove('on','off');
-      if (state === true) { els.relayDot.classList.add('on'); els.relayText.textContent='ON'; }
-      else if (state === false) { els.relayDot.classList.add('off'); els.relayText.textContent='OFF'; }
-      else { els.relayText.textContent='未知（等待狀態）'; }
-    }
-    function flashInfo(msg) {
-      els.info.textContent = msg;
-      setTimeout(()=>{ els.info.textContent=''; }, 2500);
-    }
-
-    function connectMQTT() {
-      const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-      const host = s.broker, port = s.port, useSSL = !!s.useSSL;
-      const path = (s.wsPath || '/mqtt').trim();
-      if (!host || !port) { flashInfo('請先完成連線設定'); return; }
-
-      const clientId = 'web_relay_' + Math.floor(Math.random()*999999);
-      // Paho: new Paho.Client(host, port, path, clientId)
-      client = new Paho.Client(host, Number(port), path, clientId);
-
-      client.onConnectionLost = (res) => {
-        setConnUI(false);
-        setRelayUI(null);
-        if (res.errorCode !== 0) flashInfo('連線丟失：' + res.errorMessage);
-      };
-      client.onMessageArrived = (message) => {
-        // 只關注 Status Topic
-        const sTopic = (s.topicStatus || '').trim();
-        if (message.destinationName === sTopic) {
-          const p = (message.payloadString || '').trim().toUpperCase();
-          if (p === 'ON' || p === '1') setRelayUI(true);
-          else if (p === 'OFF' || p === '0') setRelayUI(false);
-        }
-      };
-
-      const opts = {
+      clientMotor.onMessageArrived = ()=>{}; //可擴充回報
+      clientMotor.connect({
+        useSSL: MOTOR_USESSL,
         timeout: 8,
-        useSSL,
-        onSuccess: () => {
-          setConnUI(true);
-          // 訂閱狀態（retained）
-          const sTopic = (s.topicStatus || '').trim();
-          if (sTopic) client.subscribe(sTopic, { qos:0 });
-          flashInfo(`已連線（${useSSL?'WSS':'WS'}://${host}:${port}${path}）`);
+        onSuccess: ()=>{
+          setMotorUI(true);
+          flashMotorInfo(`已連線（WSS://${MOTOR_BROKER}:${MOTOR_PORT}${MOTOR_PATH}）`);
         },
-        onFailure: (err) => {
-          setConnUI(false);
-          flashInfo('連線失敗：' + (err.errorMessage || 'unknown'));
+        onFailure: (err)=>{
+          setMotorUI(false);
+          flashMotorInfo('連線失敗：'+(err.errorMessage||'unknown'));
+        }
+      });
+    }
+    function motorDisconnect(){ try{clientMotor && clientMotor.disconnect();}catch(e){} setMotorUI(false); }
+    function motorPublish(topic,payload){
+      if(!motorConnected || !clientMotor){ flashMotorInfo('尚未連線'); return; }
+      const m = new Paho.Message(payload); m.destinationName = topic; m.retained=false; m.qos=0; clientMotor.send(m);
+    }
+    function handleMotor(motor,action){
+      const topic = (motor==='1')?TOPIC_MOTOR1:TOPIC_MOTOR2;
+      const current = motorStates[motor];
+      const actionValue = (action==='forward')?1:2;
+      let payload='0';
+      if(current===actionValue){ motorStates[motor]=0; payload='0'; }
+      else { motorStates[motor]=actionValue; payload=(action==='forward')?'1':'2'; }
+      motorPublish(topic,payload);
+    }
+
+    mEls.btnConnect.addEventListener('click', motorConnect);
+    mEls.btnDisconnect.addEventListener('click', motorDisconnect);
+    mEls.btns.forEach(btn=>{
+      btn.addEventListener('click', ()=> handleMotor(btn.dataset.motor, btn.dataset.action));
+    });
+    setMotorUI(false);
+
+    // =========================================
+    // 繼電器：使用獨立客戶端 clientRelay
+    // =========================================
+    const LS_REL = 'mqtt-relay-ui';
+    const rEls = {
+      broker: document.getElementById('rel_broker'),
+      port: document.getElementById('rel_port'),
+      user: document.getElementById('rel_user'),
+      pass: document.getElementById('rel_pass'),
+      topicCmd: document.getElementById('rel_topic_cmd'),
+      topicStatus: document.getElementById('rel_topic_status'),
+      tls: document.getElementById('rel_tls'),
+      path: document.getElementById('rel_path'),
+      save: document.getElementById('rel_save'),
+      reset: document.getElementById('rel_reset'),
+      conn: document.getElementById('rel_conn'),
+      info: document.getElementById('rel_info'),
+      connect: document.getElementById('rel_connect'),
+      disconnect: document.getElementById('rel_disconnect'),
+      dot: document.getElementById('rel_dot'),
+      text: document.getElementById('rel_text'),
+      showStatus: document.getElementById('show_rel_status'),
+      showCmd: document.getElementById('show_rel_cmd'),
+      on: document.getElementById('rel_on'),
+      off: document.getElementById('rel_off'),
+      toggle: document.getElementById('rel_toggle'),
+    };
+    let clientRelay = null;
+    let relayConnected = false;
+    let relayState = null; // true/false/null
+
+    function loadRel(){
+      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
+      rEls.broker.value = s.broker ?? 'test.mosquitto.org';
+      rEls.port.value   = s.port ?? 8081;
+      rEls.user.value   = s.user ?? '';
+      rEls.pass.value   = s.pass ?? '';
+      rEls.topicCmd.value = s.topicCmd ?? 'ttu_fish/relay/cmd';
+      rEls.topicStatus.value = s.topicStatus ?? 'ttu_fish/relay/status';
+      rEls.tls.checked  = s.useSSL ?? true;
+      rEls.path.value   = s.wsPath ?? '/mqtt';
+      reflectRelTopics();
+    }
+    function saveRel(){
+      const s = {
+        broker: rEls.broker.value.trim(),
+        port: parseInt(rEls.port.value,10) || 0,
+        user: rEls.user.value,
+        pass: rEls.pass.value,
+        topicCmd: rEls.topicCmd.value.trim(),
+        topicStatus: rEls.topicStatus.value.trim(),
+        useSSL: !!rEls.tls.checked,
+        wsPath: rEls.path.value.trim() || '/mqtt',
+      };
+      localStorage.setItem(LS_REL, JSON.stringify(s));
+      reflectRelTopics();
+      flashRel('設定已儲存');
+    }
+    function resetRel(){ localStorage.removeItem(LS_REL); loadRel(); flashRel('設定已恢復預設'); }
+    function reflectRelTopics(){
+      rEls.showCmd.textContent = rEls.topicCmd.value.trim();
+      rEls.showStatus.textContent = rEls.topicStatus.value.trim();
+    }
+    function flashRel(msg){ rEls.info.textContent=msg; setTimeout(()=>rEls.info.textContent='',2500); }
+
+    function setRelConnUI(ok){
+      relayConnected = ok;
+      rEls.conn.textContent = ok ? '已連線' : '尚未連線';
+      rEls.conn.className = 'status ' + (ok ? 'ok':'bad');
+      rEls.connect.disabled = ok;
+      rEls.disconnect.disabled = !ok;
+      rEls.on.disabled = !ok;
+      rEls.off.disabled = !ok;
+      rEls.toggle.disabled = !ok;
+    }
+    function setRelStateUI(state){
+      relayState = state;
+      rEls.dot.classList.remove('on','off');
+      if(state===true){ rEls.dot.classList.add('on'); rEls.text.textContent='ON'; }
+      else if(state===false){ rEls.dot.classList.add('off'); rEls.text.textContent='OFF'; }
+      else { rEls.text.textContent='未知（等待狀態）'; }
+    }
+
+    function relConnect(){
+      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
+      if(!s.broker || !s.port){ flashRel('請先完成繼電器連線設定'); return; }
+      clientRelay = new Paho.Client(s.broker, Number(s.port), (s.wsPath||'/mqtt'), 'web_relay_'+Math.floor(Math.random()*999999));
+      clientRelay.onConnectionLost = (res)=>{ setRelConnUI(false); setRelStateUI(null); if(res.errorCode!==0) flashRel('連線丟失：'+res.errorMessage); };
+      clientRelay.onMessageArrived = (message)=>{
+        if(message.destinationName === (s.topicStatus||'').trim()){
+          const p = (message.payloadString||'').trim().toUpperCase();
+          if(p==='ON'||p==='1') setRelStateUI(true);
+          else if(p==='OFF'||p==='0') setRelStateUI(false);
         }
       };
-      // 若有帳密
-      if (s.user) opts.userName = s.user;
-      if (s.pass) opts.password = s.pass;
+      const opts = {
+        useSSL: !!s.useSSL,
+        timeout: 8,
+        onSuccess: ()=>{
+          setRelConnUI(true);
+          const st = (s.topicStatus||'').trim();
+          if(st) clientRelay.subscribe(st, {qos:0});
+          flashRel(`已連線（${s.useSSL?'WSS':'WS'}://${s.broker}:${s.port}${s.wsPath||'/mqtt'}）`);
+        },
+        onFailure: (err)=>{ setRelConnUI(false); flashRel('連線失敗：'+(err.errorMessage||'unknown')); }
+      };
+      if(s.user) opts.userName = s.user;
+      if(s.pass) opts.password = s.pass;
+      clientRelay.connect(opts);
+    }
+    function relDisconnect(){ try{clientRelay && clientRelay.disconnect();}catch(e){} setRelConnUI(false); setRelStateUI(null); }
 
-      client.connect(opts);
+    function relPublishCmd(payload){
+      if(!relayConnected || !clientRelay){ flashRel('尚未連線'); return; }
+      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
+      const cTopic = (s.topicCmd||'').trim();
+      if(!cTopic){ flashRel('未設定 Command Topic'); return; }
+      const m = new Paho.Message(payload);
+      m.destinationName = cTopic;
+      m.retained = false; // 命令不保留，避免重放
+      m.qos = 0;
+      clientRelay.send(m);
+      // 樂觀更新，最終以裝置回報為準
+      if(payload==='ON'||payload==='1') setRelStateUI(true);
+      else if(payload==='OFF'||payload==='0') setRelStateUI(false);
+      flashRel(`已發佈：${cTopic} → ${payload}`);
     }
 
-    function disconnectMQTT() {
-      try { client && client.disconnect(); } catch(e){}
-      setConnUI(false);
-      setRelayUI(null);
-    }
-
-    function publishCmd(payload) {
-      if (!isConnected || !client) { flashInfo('尚未連線'); return; }
-      const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-      const cTopic = (s.topicCmd || '').trim();
-      if (!cTopic) { flashInfo('未設定 Command Topic'); return; }
-      const msg = new Paho.Message(payload);
-      msg.destinationName = cTopic;
-      // 重要：命令不保留，避免重連時重複觸發
-      msg.retained = false;
-      msg.qos = 0;
-      client.send(msg);
-      // 樂觀更新（最終仍以裝置回報為準）
-      if (payload === 'ON' || payload === '1') setRelayUI(true);
-      else if (payload === 'OFF' || payload === '0') setRelayUI(false);
-      flashInfo(`已發佈：${cTopic} → ${payload}`);
-    }
-
-    els.btnConnect.addEventListener('click', connectMQTT);
-    els.btnDisconnect.addEventListener('click', disconnectMQTT);
-    els.btnOn.addEventListener('click', ()=> publishCmd('ON'));
-    els.btnOff.addEventListener('click', ()=> publishCmd('OFF'));
-    els.btnToggle.addEventListener('click', ()=> publishCmd('TOGGLE'));
-
-    // 初始狀態
-    setConnUI(false);
-    setRelayUI(null);
+    rEls.save.addEventListener('click', saveRel);
+    rEls.reset.addEventListener('click', resetRel);
+    rEls.connect.addEventListener('click', relConnect);
+    rEls.disconnect.addEventListener('click', relDisconnect);
+    rEls.on.addEventListener('click', ()=> relPublishCmd('ON'));
+    rEls.off.addEventListener('click', ()=> relPublishCmd('OFF'));
+    rEls.toggle.addEventListener('click', ()=> relPublishCmd('TOGGLE'));
+    loadRel();
+    setRelConnUI(false);
+    setRelStateUI(null);
   </script>
 </body>
 </html>
