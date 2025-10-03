@@ -1,374 +1,396 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MQTT 控制面板（馬達 & 繼電器獨立連線）</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
-  <style>
-    :root { --bg:#f0f2f5; --card:#fff; --text:#333; --primary:#1976d2; --danger:#c62828; --ok:#2e7d32; --muted:#607d8b; }
-    body { margin:0; padding:20px; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
-    .wrap { max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
-    .card { background:var(--card); border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.08); padding:20px; }
-    h1 { font-size:1.4rem; margin:0 0 12px; color:#1a237e; }
-    h2 { font-size:1.05rem; margin:0 0 12px; color:#455a64; }
-    .row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-    label { font-size:.9rem; color:#455a64; display:block; margin:8px 0 6px; }
-    input[type="text"],input[type="number"],input[type="password"]{
-      width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:.95rem;
-    }
-    .inline { display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
-    .hint { font-size:.85rem; color:var(--muted); }
-    .status { font-weight:700; }
-    .status.ok { color:var(--ok); }
-    .status.bad { color:var(--danger); }
-    button {
-      border:none; border-radius:10px; padding:12px 16px; font-weight:700; color:#fff; cursor:pointer;
-      background:var(--primary); transition:.2s transform,.2s filter;
-    }
-    button:active { transform:scale(.98); }
-    button.secondary { background:#455a64; }
-    button.danger { background:var(--danger); }
-    button:disabled { filter:grayscale(.6); cursor:not-allowed; }
-    .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; background:#9e9e9e; vertical-align:middle; }
-    .dot.on { background:var(--ok); }
-    .dot.off { background:var(--danger); }
-    code { background:#eef3f7; padding:2px 6px; border-radius:6px; }
-    .full { grid-column:1/-1; }
-    @media (max-width:1000px){ .wrap{grid-template-columns:1fr;} }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <!-- ====== 馬達：原本的區塊（獨立 MQTT 連線） ====== -->
-    <div class="card">
-      <h1>總控馬達（獨立 MQTT 連線）</h1>
-      <div style="margin:8px 0;">
-        狀態：<span id="motorConn" class="status bad">尚未連線</span>
-      </div>
-      <div class="inline" style="gap:10px; margin-bottom:8px;">
-        <button id="motorConnect">馬達連線</button>
-        <button id="motorDisconnect" class="danger" disabled>馬達斷線</button>
-      </div>
-      <div class="hint" id="motorInfo"></div>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MQTT Web Controller with Video Stream</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            <!DOCTYPE html>
+            <html lang="zh-Hant">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>MQTT Web Controller with Video Stream</title>
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial; background:#f0f2f5; margin:0; padding:20px; color:#333 }
+                    .card { background:#fff; padding:20px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.08); max-width:900px; margin:20px auto }
+                    h1{margin:0 0 10px 0}
+                    label{display:block;margin:6px 0 2px;font-size:0.9em}
+                    input, select {width:100%; padding:8px; box-sizing:border-box; margin-bottom:8px}
+                    .row {display:flex; gap:12px}
+                    .col {flex:1}
+                    .controls{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+                    button{padding:10px 14px;border-radius:8px;border:0;color:#fff;background:#1976d2;cursor:pointer}
+                    button.secondary{background:#00796b}
+                    button.warn{background:#c62828}
+                    .status{font-weight:bold}
+                    .small{font-size:0.9em;color:#666}
+                    #notification{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 16px;border-radius:6px;opacity:0;transition:opacity .3s}
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h1>大同資工 魚菜共生 - MQTT 控制</h1>
+                    <p class="small">在下方設定 broker/port/ws_path (例如 test.mosquitto.org / 8081 / /mqtt)。可把設定儲存到 ESP（需與 ESP 同一網路）。</p>
+                    <div class="row">
+                        <div class="col">
+                            <label for="broker">Broker (host)</label>
+                            <input id="broker" placeholder="test.mosquitto.org" />
+                        </div>
+                        <div class="col">
+                            <label for="port">Port</label>
+                            <input id="port" placeholder="8081" />
+                        </div>
+                        <div class="col">
+                            <label for="ws_path">WS Path</label>
+                            <input id="ws_path" placeholder="/mqtt" />
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col">
+                            <label for="client_id">Client ID</label>
+                            <input id="client_id" placeholder="TtuFishWeb_123" />
+                        </div>
+                        <div class="col">
+                            <label for="device_ip">ESP Device IP (optional)</label>
+                            <input id="device_ip" placeholder="192.168.4.1" />
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-top:8px;">
+                        <button id="connect-btn">連線</button>
+                        <button id="save-local" class="secondary">儲存本機</button>
+                        <button id="save-device" class="secondary">儲存到裝置</button>
+                        <button id="clear-local" class="warn">清空本機設定</button>
+                    </div>
+                    <div style="margin-top:12px">
+                        MQTT 狀態: <span id="status-label" class="status">尚未連線</span>
+                    </div>
+                </div>
 
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;"/>
-      <h2>控制</h2>
-      <div class="inline" style="gap:10px; margin-bottom:6px;">
-        <button class="secondary" id="btn-fwd-1" data-motor="1" data-action="forward" disabled>1號正轉</button>
-        <button class="secondary" id="btn-rev-1" data-motor="1" data-action="reverse" disabled>1號反轉</button>
-        <button class="secondary" id="btn-fwd-2" data-motor="2" data-action="forward" disabled>2號正轉</button>
-        <button class="secondary" id="btn-rev-2" data-motor="2" data-action="reverse" disabled>2號反轉</button>
-      </div>
-      <p class="hint">
-        馬達主題：<code>ttu_fish/motor1</code>, <code>ttu_fish/motor2</code><br/>
-        （如需自訂，請改動程式內常數）
-      </p>
-    </div>
+                <div class="card">
+                    <h2>繼電器 (relay)</h2>
+                    <div style="display:flex; gap:8px; align-items:center">
+                        <button id="relay-on">ON</button>
+                        <button id="relay-off" class="secondary">OFF</button>
+                        <button id="relay-toggle" class="secondary">TOGGLE</button>
+                        <div style="margin-left:16px">狀態: <span id="relay-status">未知</span></div>
+                    </div>
+                </div>
 
-    <!-- ====== 繼電器：獨立的 MQTT 連線與設定 ====== -->
-    <div class="card">
-      <h1>繼電器（獨立 MQTT 連線）</h1>
-      <div class="row">
-        <div>
-          <label>Broker</label>
-          <input id="rel_broker" type="text" placeholder="e.g. test.mosquitto.org"/>
-        </div>
-        <div>
-          <label>WebSocket Port</label>
-          <input id="rel_port" type="number" placeholder="e.g. 8081"/>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>MQTT User（可留空）</label>
-          <input id="rel_user" type="text"/>
-        </div>
-        <div>
-          <label>MQTT Pass（可留空）</label>
-          <input id="rel_pass" type="password"/>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Command Topic（發佈 ON/OFF/TOGGLE）</label>
-          <input id="rel_topic_cmd" type="text" placeholder="ttu_fish/relay/cmd"/>
-        </div>
-        <div>
-          <label>Status Topic（訂閱，ESP retain=TRUE）</label>
-          <input id="rel_topic_status" type="text" placeholder="ttu_fish/relay/status"/>
-        </div>
-      </div>
-      <div class="row">
-        <div class="inline">
-          <input id="rel_tls" type="checkbox"/>
-          <label for="rel_tls">使用 TLS（WSS）</label>
-        </div>
-        <div>
-          <label>WebSocket Path</label>
-          <input id="rel_path" type="text" placeholder="/mqtt"/>
-        </div>
-      </div>
+                <div class="card">
+                    <h2>總控馬達</h2>
+                    <div class="controls">
+                        <button id="btn-fwd-1" class="secondary" data-motor="1" data-action="forward">1號正轉</button>
+                        <button id="btn-rev-1" class="secondary" data-motor="1" data-action="reverse">1號反轉</button>
+                        <button id="btn-fwd-2" class="secondary" data-motor="2" data-action="forward">2號正轉</button>
+                        <button id="btn-rev-2" class="secondary" data-motor="2" data-action="reverse">2號反轉</button>
+                    </div>
+                </div>
 
-      <div class="inline" style="gap:10px; margin-top:8px;">
-        <button id="rel_save" class="secondary">儲存設定</button>
-        <button id="rel_reset" class="secondary">清空設定</button>
-      </div>
+                <div id="notification"></div>
 
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;"/>
-      <div style="margin:8px 0;">
-        狀態：<span id="rel_conn" class="status bad">尚未連線</span>
-      </div>
-      <div class="inline" style="gap:10px; margin-bottom:8px;">
-        <button id="rel_connect">繼電器連線</button>
-        <button id="rel_disconnect" class="danger" disabled>繼電器斷線</button>
-      </div>
-      <div class="hint" id="rel_info"></div>
+                <script>
+                (function(){
+                    // 元件
+                    const brokerEl = document.getElementById('broker');
+                    const portEl = document.getElementById('port');
+                    const wsPathEl = document.getElementById('ws_path');
+                    const clientIdEl = document.getElementById('client_id');
+                    const deviceIpEl = document.getElementById('device_ip');
+                    const connectBtn = document.getElementById('connect-btn');
+                    const saveLocalBtn = document.getElementById('save-local');
+                    const saveDeviceBtn = document.getElementById('save-device');
+                    const clearLocalBtn = document.getElementById('clear-local');
+                    const statusLabel = document.getElementById('status-label');
+                    const notification = document.getElementById('notification');
 
-      <h2 style="margin-top:14px;">Relay 狀態</h2>
-      <div style="font-size:1.1rem; margin:6px 0 12px;">
-        <span id="rel_dot" class="dot"></span>
-        <span id="rel_text">未知（等待狀態）</span>
-      </div>
-      <div class="inline" style="gap:10px;">
-        <button id="rel_on"  class="secondary" disabled>ON</button>
-        <button id="rel_off" class="secondary" disabled>OFF</button>
-        <button id="rel_toggle" disabled>TOGGLE</button>
-      </div>
-      <p class="hint" style="margin-top:10px;">
-        訂閱：<code id="show_rel_status"></code><br/>
-        發佈：<code id="show_rel_cmd"></code>
-      </p>
-    </div>
+                    // relay
+                    const relayOnBtn = document.getElementById('relay-on');
+                    const relayOffBtn = document.getElementById('relay-off');
+                    const relayToggleBtn = document.getElementById('relay-toggle');
+                    const relayStatusLabel = document.getElementById('relay-status');
 
-    <!-- 你的影像畫面 -->
-    <div class="card full">
-      <h2>即時影像畫面</h2>
-      <iframe
-        style="width:100%; height:460px; border:1px solid #ddd; border-radius:12px; background:#000;"
-        src="https://www.homeyes.com.tw/site1/fish.php?uid=SSAE-029609-FDEBC&box=0&r=rtsp%3A%2F%2Fwww.homeyes.com.tw%3A7554%2F22"
-        title="Live Video Stream" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen>
-      </iframe>
-    </div>
-  </div>
+                    // motors
+                    const motorButtons = document.querySelectorAll('[data-motor]');
 
-  <script>
-    // =========================================
-    // 馬達：使用獨立客戶端 clientMotor
-    // =========================================
-    const MOTOR_BROKER = "test.mosquitto.org";
-    const MOTOR_PORT   = 8081;     // WSS
-    const MOTOR_USESSL = true;
-    const MOTOR_PATH   = "/mqtt";
-    const TOPIC_MOTOR1 = "ttu_fish/motor1";
-    const TOPIC_MOTOR2 = "ttu_fish/motor2";
+                    // defaults
+                    const DEFAULTS = { broker:'test.mosquitto.org', port:8081, ws_path:'/mqtt', clientId:'TtuFishWeb_'+Math.floor(Math.random()*1000) };
 
-    const mEls = {
-      conn: document.getElementById('motorConn'),
-      info: document.getElementById('motorInfo'),
-      btnConnect: document.getElementById('motorConnect'),
-      btnDisconnect: document.getElementById('motorDisconnect'),
-      btns: [
-        document.getElementById('btn-fwd-1'),
-        document.getElementById('btn-rev-1'),
-        document.getElementById('btn-fwd-2'),
-        document.getElementById('btn-rev-2'),
-      ],
-    };
-    let clientMotor = null;
-    let motorConnected = false;
-    const motorStates = { '1':0, '2':0 }; // 0 stop, 1 fwd, 2 rev
+                    // topics
+                    const TOPIC_RELAY_CMD = 'ttu/relay';
+                    const TOPIC_RELAY_STATUS = 'ttu/relay/status';
+                    const TOPIC_MOTOR1 = 'ttu_fish/motor1';
+                    const TOPIC_MOTOR2 = 'ttu_fish/motor2';
 
-    function setMotorUI(connected){
-      motorConnected = connected;
-      mEls.conn.textContent = connected ? '已連線' : '尚未連線';
-      mEls.conn.className = 'status ' + (connected ? 'ok' : 'bad');
-      mEls.btnConnect.disabled = connected;
-      mEls.btnDisconnect.disabled = !connected;
-      mEls.btns.forEach(b=> b.disabled = !connected);
-    }
-    function flashMotorInfo(msg){ mEls.info.textContent = msg; setTimeout(()=>mEls.info.textContent='',2500); }
+                    // runtime
+                    let client = null;
+                    let isConnected = false;
 
-    function motorConnect(){
-      clientMotor = new Paho.Client(MOTOR_BROKER, Number(MOTOR_PORT), MOTOR_PATH, 'web_motor_'+Math.floor(Math.random()*999999));
-      clientMotor.onConnectionLost = (res)=>{
-        setMotorUI(false);
-        if(res.errorCode!==0) flashMotorInfo('連線丟失：'+res.errorMessage);
-      };
-      clientMotor.onMessageArrived = ()=>{}; //可擴充回報
-      clientMotor.connect({
-        useSSL: MOTOR_USESSL,
-        timeout: 8,
-        onSuccess: ()=>{
-          setMotorUI(true);
-          flashMotorInfo(`已連線（WSS://${MOTOR_BROKER}:${MOTOR_PORT}${MOTOR_PATH}）`);
-        },
-        onFailure: (err)=>{
-          setMotorUI(false);
-          flashMotorInfo('連線失敗：'+(err.errorMessage||'unknown'));
-        }
-      });
-    }
-    function motorDisconnect(){ try{clientMotor && clientMotor.disconnect();}catch(e){} setMotorUI(false); }
-    function motorPublish(topic,payload){
-      if(!motorConnected || !clientMotor){ flashMotorInfo('尚未連線'); return; }
-      const m = new Paho.Message(payload); m.destinationName = topic; m.retained=false; m.qos=0; clientMotor.send(m);
-    }
-    function handleMotor(motor,action){
-      const topic = (motor==='1')?TOPIC_MOTOR1:TOPIC_MOTOR2;
-      const current = motorStates[motor];
-      const actionValue = (action==='forward')?1:2;
-      let payload='0';
-      if(current===actionValue){ motorStates[motor]=0; payload='0'; }
-      else { motorStates[motor]=actionValue; payload=(action==='forward')?'1':'2'; }
-      motorPublish(topic,payload);
-    }
+                    // helpers
+                    function showNotification(msg,d=2500){ notification.textContent=msg; notification.style.opacity=1; setTimeout(()=>notification.style.opacity=0,d);} 
+                    function loadLocal(){
+                        const s = localStorage.getItem('ttu_mqtt_cfg');
+                        if(s){ try{ const o=JSON.parse(s); brokerEl.value=o.broker||DEFAULTS.broker; portEl.value=o.port||DEFAULTS.port; wsPathEl.value=o.ws_path||DEFAULTS.ws_path; clientIdEl.value=o.clientId||DEFAULTS.clientId; deviceIpEl.value=o.deviceIp||''; }catch(e){} }
+                        else { brokerEl.value=DEFAULTS.broker; portEl.value=DEFAULTS.port; wsPathEl.value=DEFAULTS.ws_path; clientIdEl.value=DEFAULTS.clientId; }
+                    }
+                    function saveLocal(){ const o={broker:brokerEl.value, port:portEl.value, ws_path:wsPathEl.value, clientId:clientIdEl.value, deviceIp:deviceIpEl.value}; localStorage.setItem('ttu_mqtt_cfg', JSON.stringify(o)); showNotification('已儲存到本機'); }
+                    function clearLocal(){ localStorage.removeItem('ttu_mqtt_cfg'); loadLocal(); showNotification('已清除本機設定'); }
 
-    mEls.btnConnect.addEventListener('click', motorConnect);
-    mEls.btnDisconnect.addEventListener('click', motorDisconnect);
-    mEls.btns.forEach(btn=>{
-      btn.addEventListener('click', ()=> handleMotor(btn.dataset.motor, btn.dataset.action));
-    });
-    setMotorUI(false);
+                    // build Paho client with ws path
+                    function createClient(){
+                        const host = brokerEl.value;
+                        const port = Number(portEl.value);
+                        const path = wsPathEl.value || '/mqtt';
+                        const clientId = clientIdEl.value || DEFAULTS.clientId;
+                        // Paho.Client(host, port, path, clientId)
+                        try{
+                            client = new Paho.Client(host, port, path, clientId);
+                        }catch(e){ showNotification('建立 MQTT client 失敗: '+e); console.error(e); }
+                        if(!client) return;
+                        client.onConnectionLost = onConnectionLost;
+                        client.onMessageArrived = onMessageArrived;
+                    }
 
-    // =========================================
-    // 繼電器：使用獨立客戶端 clientRelay
-    // =========================================
-    const LS_REL = 'mqtt-relay-ui';
-    const rEls = {
-      broker: document.getElementById('rel_broker'),
-      port: document.getElementById('rel_port'),
-      user: document.getElementById('rel_user'),
-      pass: document.getElementById('rel_pass'),
-      topicCmd: document.getElementById('rel_topic_cmd'),
-      topicStatus: document.getElementById('rel_topic_status'),
-      tls: document.getElementById('rel_tls'),
-      path: document.getElementById('rel_path'),
-      save: document.getElementById('rel_save'),
-      reset: document.getElementById('rel_reset'),
-      conn: document.getElementById('rel_conn'),
-      info: document.getElementById('rel_info'),
-      connect: document.getElementById('rel_connect'),
-      disconnect: document.getElementById('rel_disconnect'),
-      dot: document.getElementById('rel_dot'),
-      text: document.getElementById('rel_text'),
-      showStatus: document.getElementById('show_rel_status'),
-      showCmd: document.getElementById('show_rel_cmd'),
-      on: document.getElementById('rel_on'),
-      off: document.getElementById('rel_off'),
-      toggle: document.getElementById('rel_toggle'),
-    };
-    let clientRelay = null;
-    let relayConnected = false;
-    let relayState = null; // true/false/null
+                    function onConnect(){ isConnected=true; statusLabel.textContent='已連線'; showNotification('MQTT 已連線',1500); try{ client.subscribe(TOPIC_RELAY_STATUS); client.subscribe(TOPIC_MOTOR1); client.subscribe(TOPIC_MOTOR2);}catch(e){} }
+                    function onConnectionLost(resp){ isConnected=false; statusLabel.textContent='尚未連線'; showNotification('MQTT 連線已斷開',1500); }
+                    function onFailure(resp){ isConnected=false; statusLabel.textContent='連線失敗'; showNotification('連線失敗'); console.error(resp); }
+                    function onMessageArrived(msg){ try{ console.log('msg',msg.destinationName,msg.payloadString); if(msg.destinationName===TOPIC_RELAY_STATUS){ relayStatusLabel.textContent=msg.payloadString; } }catch(e){ console.error(e);} }
 
-    function loadRel(){
-      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
-      rEls.broker.value = s.broker ?? 'test.mosquitto.org';
-      rEls.port.value   = s.port ?? 8081;
-      rEls.user.value   = s.user ?? '';
-      rEls.pass.value   = s.pass ?? '';
-      rEls.topicCmd.value = s.topicCmd ?? 'ttu_fish/relay/cmd';
-      rEls.topicStatus.value = s.topicStatus ?? 'ttu_fish/relay/status';
-      rEls.tls.checked  = s.useSSL ?? true;
-      rEls.path.value   = s.wsPath ?? '/mqtt';
-      reflectRelTopics();
-    }
-    function saveRel(){
-      const s = {
-        broker: rEls.broker.value.trim(),
-        port: parseInt(rEls.port.value,10) || 0,
-        user: rEls.user.value,
-        pass: rEls.pass.value,
-        topicCmd: rEls.topicCmd.value.trim(),
-        topicStatus: rEls.topicStatus.value.trim(),
-        useSSL: !!rEls.tls.checked,
-        wsPath: rEls.path.value.trim() || '/mqtt',
-      };
-      localStorage.setItem(LS_REL, JSON.stringify(s));
-      reflectRelTopics();
-      flashRel('設定已儲存');
-    }
-    function resetRel(){ localStorage.removeItem(LS_REL); loadRel(); flashRel('設定已恢復預設'); }
-    function reflectRelTopics(){
-      rEls.showCmd.textContent = rEls.topicCmd.value.trim();
-      rEls.showStatus.textContent = rEls.topicStatus.value.trim();
-    }
-    function flashRel(msg){ rEls.info.textContent=msg; setTimeout(()=>rEls.info.textContent='',2500); }
+                    function connect(){ if(isConnected) return; createClient(); if(!client){showNotification('無法建立 client'); return;} statusLabel.textContent='連線中...'; try{ client.connect({onSuccess:onConnect, onFailure:onFailure, useSSL:true}); }catch(e){ onFailure(e);} }
+                    function disconnect(){ if(!client) return; try{ client.disconnect(); }catch(e){} isConnected=false; statusLabel.textContent='尚未連線'; }
+                    function publish(topic,payload){ if(!isConnected){ showNotification('尚未連線'); return;} const m=new Paho.Message(payload); m.destinationName=topic; client.send(m); }
 
-    function setRelConnUI(ok){
-      relayConnected = ok;
-      rEls.conn.textContent = ok ? '已連線' : '尚未連線';
-      rEls.conn.className = 'status ' + (ok ? 'ok':'bad');
-      rEls.connect.disabled = ok;
-      rEls.disconnect.disabled = !ok;
-      rEls.on.disabled = !ok;
-      rEls.off.disabled = !ok;
-      rEls.toggle.disabled = !ok;
-    }
-    function setRelStateUI(state){
-      relayState = state;
-      rEls.dot.classList.remove('on','off');
-      if(state===true){ rEls.dot.classList.add('on'); rEls.text.textContent='ON'; }
-      else if(state===false){ rEls.dot.classList.add('off'); rEls.text.textContent='OFF'; }
-      else { rEls.text.textContent='未知（等待狀態）'; }
-    }
+                    // relay events
+                    relayOnBtn.addEventListener('click', ()=>{ publish(TOPIC_RELAY_CMD,'ON'); });
+                    relayOffBtn.addEventListener('click', ()=>{ publish(TOPIC_RELAY_CMD,'OFF'); });
+                    relayToggleBtn.addEventListener('click', ()=>{ publish(TOPIC_RELAY_CMD,'TOGGLE'); });
 
-    function relConnect(){
-      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
-      if(!s.broker || !s.port){ flashRel('請先完成繼電器連線設定'); return; }
-      clientRelay = new Paho.Client(s.broker, Number(s.port), (s.wsPath||'/mqtt'), 'web_relay_'+Math.floor(Math.random()*999999));
-      clientRelay.onConnectionLost = (res)=>{ setRelConnUI(false); setRelStateUI(null); if(res.errorCode!==0) flashRel('連線丟失：'+res.errorMessage); };
-      clientRelay.onMessageArrived = (message)=>{
-        if(message.destinationName === (s.topicStatus||'').trim()){
-          const p = (message.payloadString||'').trim().toUpperCase();
-          if(p==='ON'||p==='1') setRelStateUI(true);
-          else if(p==='OFF'||p==='0') setRelStateUI(false);
-        }
-      };
-      const opts = {
-        useSSL: !!s.useSSL,
-        timeout: 8,
-        onSuccess: ()=>{
-          setRelConnUI(true);
-          const st = (s.topicStatus||'').trim();
-          if(st) clientRelay.subscribe(st, {qos:0});
-          flashRel(`已連線（${s.useSSL?'WSS':'WS'}://${s.broker}:${s.port}${s.wsPath||'/mqtt'}）`);
-        },
-        onFailure: (err)=>{ setRelConnUI(false); flashRel('連線失敗：'+(err.errorMessage||'unknown')); }
-      };
-      if(s.user) opts.userName = s.user;
-      if(s.pass) opts.password = s.pass;
-      clientRelay.connect(opts);
-    }
-    function relDisconnect(){ try{clientRelay && clientRelay.disconnect();}catch(e){} setRelConnUI(false); setRelStateUI(null); }
+                    // motor events
+                    motorButtons.forEach(b=>b.addEventListener('click', ()=>{ const motor=b.dataset.motor; const action=b.dataset.action; const payload = (action==='forward')? '1':'2'; const topic = motor==='1'? TOPIC_MOTOR1:TOPIC_MOTOR2; publish(topic,payload); }));
 
-    function relPublishCmd(payload){
-      if(!relayConnected || !clientRelay){ flashRel('尚未連線'); return; }
-      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
-      const cTopic = (s.topicCmd||'').trim();
-      if(!cTopic){ flashRel('未設定 Command Topic'); return; }
-      const m = new Paho.Message(payload);
-      m.destinationName = cTopic;
-      m.retained = false; // 命令不保留，避免重放
-      m.qos = 0;
-      clientRelay.send(m);
-      // 樂觀更新，最終以裝置回報為準
-      if(payload==='ON'||payload==='1') setRelStateUI(true);
-      else if(payload==='OFF'||payload==='0') setRelStateUI(false);
-      flashRel(`已發佈：${cTopic} → ${payload}`);
-    }
+                    // UI buttons
+                    connectBtn.addEventListener('click', ()=>{ if(isConnected) disconnect(); else connect(); });
+                    saveLocalBtn.addEventListener('click', saveLocal); clearLocalBtn.addEventListener('click', clearLocal);
 
-    rEls.save.addEventListener('click', saveRel);
-    rEls.reset.addEventListener('click', resetRel);
-    rEls.connect.addEventListener('click', relConnect);
-    rEls.disconnect.addEventListener('click', relDisconnect);
-    rEls.on.addEventListener('click', ()=> relPublishCmd('ON'));
-    rEls.off.addEventListener('click', ()=> relPublishCmd('OFF'));
-    rEls.toggle.addEventListener('click', ()=> relPublishCmd('TOGGLE'));
-    loadRel();
-    setRelConnUI(false);
-    setRelStateUI(null);
-  </script>
+                    // save to device -> POST /config on device IP
+                    saveDeviceBtn.addEventListener('click', async ()=>{
+                        const ip = deviceIpEl.value.trim(); if(!ip){ showNotification('請填寫 ESP IP'); return; }
+                        const url = `http://${ip}/config`;
+                        const body = new URLSearchParams(); body.append('server', brokerEl.value); body.append('port', portEl.value); body.append('user',''); body.append('password',''); body.append('topic_cmd', TOPIC_RELAY_CMD); body.append('topic_status', TOPIC_RELAY_STATUS); body.append('use_tls', '1'); body.append('ws_path', wsPathEl.value || '/mqtt');
+                        try{
+                            const resp = await fetch(url, { method:'POST', body: body });
+                            const text = await resp.text();
+                            showNotification('已儲存到裝置');
+                        }catch(e){ showNotification('儲存到裝置失敗: '+e,4000); console.error(e); }
+                    });
+
+                    // 初始化
+                    loadLocal();
+                })();
+                </script>
+            </body>
+            </html>
+                                const motor = btn.dataset.motor;
+                                const action = btn.dataset.action;
+                                btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                                btn.classList.remove('stop');
+                            }
+                        });
+
+                        // relay buttons
+                        if (relayOnBtn) relayOnBtn.disabled = !isConnected;
+                        if (relayOffBtn) relayOffBtn.disabled = !isConnected;
+                        if (relayToggleBtn) relayToggleBtn.disabled = !isConnected;
+                    }
+            
+                    let notificationTimer;
+                    function showNotification(message) {
+                        notification.textContent = message;
+                        notification.classList.add('show');
+                        clearTimeout(notificationTimer);
+                        notificationTimer = setTimeout(() => {
+                            notification.classList.remove('show');
+                        }, 3000);
+                    }
+
+                    // --- 事件監聽器 ---
+                    connectBtn.addEventListener('click', () => {
+                        if (isConnected) {
+                            disconnect();
+                        } else {
+                            connect();
+                        }
+                    });
+
+                    motorButtons.forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            handleMotorControl(btn.dataset.motor, btn.dataset.action);
+                        });
+                    });
+
+                    if (relayOnBtn) relayOnBtn.addEventListener('click', () => handleRelayCommand('ON'));
+                    if (relayOffBtn) relayOffBtn.addEventListener('click', () => handleRelayCommand('OFF'));
+                    if (relayToggleBtn) relayToggleBtn.addEventListener('click', () => handleRelayCommand('TOGGLE'));
+
+                    // --- 初始呼叫 ---
+                    updateUI();
+                });
+            </script>
+                motorStates = { '1': 0, '2': 0 }; // 重置狀態
+                updateUI();
+            }
+
+            function onMessageArrived(message) {
+                console.log(`收到訊息: Topic=${message.destinationName}, Payload=${message.payloadString}`);
+                // 此處可擴展用於處理從設備接收的狀態回饋
+            }
+
+            function onFailure(responseObject) {
+                console.error("連線失敗: " + responseObject.errorMessage);
+                isConnected = false;
+                showNotification("連線失敗，請檢查 Broker 設定或網路。");
+                updateUI();
+            }
+
+            // --- 核心功能函式 ---
+
+            function connect() {
+                if (isConnected) return;
+
+                console.log(`正在連線至 wss://${MQTT_BROKER}:${MQTT_PORT}`);
+                statusLabel.textContent = '連線中...';
+                statusLabel.className = 'status-connecting';
+                
+                client = new Paho.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+                
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+                
+                client.connect({
+                    onSuccess: onConnect,
+                    onFailure: onFailure,
+                    useSSL: true
+                });
+            }
+
+            function disconnect() {
+                if (!isConnected) return;
+                console.log("正在斷開連線...");
+                client.disconnect();
+                isConnected = false; // 立即更新狀態
+                updateUI();
+            }
+
+            function publishMessage(topic, payload) {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+                const message = new Paho.Message(payload);
+                message.destinationName = topic;
+                client.send(message);
+                console.log(`已發布訊息: Topic=${topic}, Payload=${payload}`);
+            }
+
+            function handleMotorControl(motor, action) {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+
+                const topic = (motor === '1')? TOPIC_MOTOR1 : TOPIC_MOTOR2;
+                let payload = '0'; // 預設為停止
+                
+                const currentState = motorStates[motor];
+                const actionValue = (action === 'forward')? 1 : 2;
+
+                if (currentState === actionValue) {
+                    motorStates[motor] = 0;
+                    payload = '0';
+                } else {
+                    motorStates[motor] = actionValue;
+                    payload = (action === 'forward')? '1' : '2';
+                }
+                
+                publishMessage(topic, payload);
+                updateUI();
+            }
+
+            // --- UI 更新與輔助函式 ---
+
+            function updateUI() {
+                if (isConnected) {
+                    statusLabel.textContent = '已連線';
+                    statusLabel.className = 'status-connected';
+                    connectBtn.textContent = '斷開連線';
+                    connectBtn.classList.add('connected');
+                } else {
+                    if (statusLabel.className !== 'status-connecting') {
+                        statusLabel.textContent = '尚未連線';
+                        statusLabel.className = 'status-disconnected';
+                    }
+                    connectBtn.textContent = '連線';
+                    connectBtn.classList.remove('connected');
+                }
+
+                motorButtons.forEach(btn => {
+                    btn.disabled = !isConnected;
+                    if (isConnected) {
+                        const motor = btn.dataset.motor;
+                        const action = btn.dataset.action;
+                        const currentState = motorStates[motor];
+                        const actionValue = (action === 'forward')? 1 : 2;
+
+                        if (currentState === actionValue) {
+                            btn.textContent = `${motor}號停止`;
+                            btn.classList.add('stop');
+                        } else {
+                            btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                            btn.classList.remove('stop');
+                        }
+                    } else {
+                        const motor = btn.dataset.motor;
+                        const action = btn.dataset.action;
+                        btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                        btn.classList.remove('stop');
+                    }
+                });
+            }
+            
+            let notificationTimer;
+            function showNotification(message) {
+                notification.textContent = message;
+                notification.classList.add('show');
+                clearTimeout(notificationTimer);
+                notificationTimer = setTimeout(() => {
+                    notification.classList.remove('show');
+                }, 3000);
+            }
+
+            // --- 事件監聽器 ---
+            connectBtn.addEventListener('click', () => {
+                if (isConnected) {
+                    disconnect();
+                } else {
+                    connect();
+                }
+            });
+
+            motorButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    handleMotorControl(btn.dataset.motor, btn.dataset.action);
+                });
+            });
+
+            // --- 初始呼叫 ---
+            updateUI();
+        });
+    </script>
+
 </body>
 </html>
