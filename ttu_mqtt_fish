@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MQTT Web Controller with Video Stream</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 90%;
+            max-width: 400px;
+            margin: 0 auto 30px auto;
+        }
+        h1 { color: #1a237e; margin-top: 0; font-size: 1.5em; }
+        h2 { color: #555; font-size: 1.1em; margin-bottom: 20px; font-weight: normal; }
+
+        .status-bar { margin: 20px 0; font-size: 1.2em; font-weight: bold; }
+        .status-disconnected { color: #d32f2f; }
+        .status-connected { color: #388e3c; }
+        .status-connecting { color: #f57c00; }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        button {
+            padding: 12px 15px;
+            font-size: 1em;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+            font-weight: bold;
+            color: white;
+        }
+        button:active { transform: scale(0.98); }
+        button:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.7; }
+        #connect-btn { grid-column: 1 / -1; background-color: #1976d2; }
+        #connect-btn.connected { background-color: #c62828; }
+        .motor-btn { background-color: #00796b; }
+        .motor-btn.stop { background-color: #fbc02d; color: #333; }
+
+        .notification {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background-color: #333; color: white; padding: 10px 20px;
+            border-radius: 5px; z-index: 1000; opacity: 0; transition: opacity 0.5s;
+        }
+        .notification.show { opacity: 1; }
+
+        .video-container { margin: 0 auto; width: 90%; max-width: 800px; text-align: center; }
+        .video-container h3 { color: #333; }
+        .video-frame {
+            width: 100%; height: 450px; border: 1px solid #ddd; border-radius: 12px; background-color: #000;
+        }
+
+        /* ===== [Relay] UI 樣式 ===== */
+        .relay-card {
+            background: white;
+            width: 90%;
+            max-width: 400px;
+            margin: 0 auto 30px auto;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.1);
+            text-align: center;
+        }
+        .relay-title { margin: 0 0 8px 0; color: #263238; }
+        .relay-status {
+            margin: 6px 0 16px 0;
+            font-size: 1.05em;
+        }
+        .relay-status .dot {
+            display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+            margin-right: 8px; vertical-align: middle; background: #9e9e9e;
+        }
+        .relay-status.on .dot { background: #2e7d32; }
+        .relay-status.off .dot { background: #b71c1c; }
+        #relay-toggle {
+            background: #455a64; /* OFF */
+        }
+        #relay-toggle.on {
+            background: #2e7d32; /* ON */
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>大同資工魚菜共生</h1>
+        <h2>總控馬達 => MQTT連線</h2>
+        
+        <div class="status-bar">
+            MQTT狀態: <span id="status-label" class="status-disconnected">尚未連線</span>
+        </div>
+
+        <button id="connect-btn">連線</button>
+        
+        <div class="controls">
+            <button id="btn-fwd-1" class="motor-btn" data-motor="1" data-action="forward" disabled>1號正轉</button>
+            <button id="btn-rev-1" class="motor-btn" data-motor="1" data-action="reverse" disabled>1號反轉</button>
+            <button id="btn-fwd-2" class="motor-btn" data-motor="2" data-action="forward" disabled>2號正轉</button>
+            <button id="btn-rev-2" class="motor-btn" data-motor="2" data-action="reverse" disabled>2號反轉</button>
+        </div>
+    </div>
+
+    <!-- ===== [Relay] 控制卡片 ===== -->
+    <div class="relay-card">
+        <h3 class="relay-title">繼電器控制（Relay）</h3>
+        <div id="relay-status" class="relay-status"><span class="dot"></span><span id="relay-status-text">未知</span></div>
+        <button id="relay-toggle" disabled>切換 ON / OFF</button>
+        <div style="margin-top:10px; font-size: 0.9em; color:#607d8b;">
+            <span>狀態主題：</span><code id="relay-status-topic-code"></code><br>
+            <span>控制主題：</span><code id="relay-cmd-topic-code"></code>
+        </div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <div class="video-container">
+        <h3>即時影像畫面</h3>
+        <iframe 
+            class="video-frame"
+            src="https://www.homeyes.com.tw/site1/fish.php?uid=SSAE-029609-FDEBC&box=0&r=rtsp%3A%2F%2Fwww.homeyes.com.tw%3A7554%2F22" 
+            title="Live Video Stream"
+            frameborder="0" 
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+            allowfullscreen>
+        </iframe>
+    </div>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            // --- 配置參數 ---
+            const MQTT_BROKER = "test.mosquitto.org";
+            const MQTT_PORT = 8081; 
+            const MQTT_CLIENT_ID = "TtuFish001_Web_" + parseInt(Math.random() * 1000);
+            const TOPIC_MOTOR1 = "ttu_fish/motor1";
+            const TOPIC_MOTOR2 = "ttu_fish/motor2";
+
+            // ===== [Relay] 主題（請依你的 config.h 調整） =====
+            // ESP8266 端：publishStatus() 會用 retained true 發佈狀態
+            // 建議：MQTT_TOPIC_COMMAND => ttu_fish/relay/cmd，MQTT_TOPIC_STATUS => ttu_fish/relay/status
+            const TOPIC_RELAY_CMD = "ttu_fish/relay/cmd";       // 發佈 "ON" / "OFF" / "TOGGLE"
+            const TOPIC_RELAY_STATUS = "ttu_fish/relay/status"; // 收到 "ON" / "OFF"（retained）
+
+            // --- 狀態變數 ---
+            let client;
+            let isConnected = false;
+            let motorStates = { '1': 0, '2': 0 }; // 0: stop, 1: forward, 2: reverse
+            // [Relay]：null=未知、true=ON、false=OFF
+            let relayState = null;
+
+            // --- UI 元素 ---
+            const connectBtn = document.getElementById('connect-btn');
+            const statusLabel = document.getElementById('status-label');
+            const motorButtons = document.querySelectorAll('.motor-btn');
+            const notification = document.getElementById('notification');
+
+            // [Relay] 元素
+            const relayStatusEl = document.getElementById('relay-status');
+            const relayStatusText = document.getElementById('relay-status-text');
+            const relayToggleBtn = document.getElementById('relay-toggle');
+            document.getElementById('relay-status-topic-code').textContent = TOPIC_RELAY_STATUS;
+            document.getElementById('relay-cmd-topic-code').textContent = TOPIC_RELAY_CMD;
+
+            // --- MQTT 事件處理 ---
+            function onConnect() {
+                console.log("成功連線至 MQTT Broker!");
+                isConnected = true;
+                // 訂閱主題
+                client.subscribe(TOPIC_MOTOR1);
+                client.subscribe(TOPIC_MOTOR2);
+
+                // [Relay] 訂閱狀態主題（期望讀到 retained 狀態）
+                client.subscribe(TOPIC_RELAY_STATUS);
+                console.log(`已訂閱主題: ${TOPIC_MOTOR1}, ${TOPIC_MOTOR2}, ${TOPIC_RELAY_STATUS}`);
+
+                updateUI();
+            }
+
+            function onConnectionLost(responseObject) {
+                if (responseObject.errorCode !== 0) {
+                    console.error("連線丟失: " + responseObject.errorMessage);
+                }
+                isConnected = false;
+                motorStates = { '1': 0, '2': 0 };
+                relayState = null; // 失聯時未知
+                updateUI();
+                updateRelayUI();
+            }
+
+            function onMessageArrived(message) {
+                console.log(`收到訊息: Topic=${message.destinationName}, Payload=${message.payloadString}`);
+                // [Relay] 狀態回饋處理
+                if (message.destinationName === TOPIC_RELAY_STATUS) {
+                    const p = message.payloadString.trim().toUpperCase();
+                    if (p === "ON" || p === "1") {
+                        relayState = true;
+                    } else if (p === "OFF" || p === "0") {
+                        relayState = false;
+                    } else {
+                        // 未知字串，保留現況
+                        console.warn("未知的繼電器狀態字串：", p);
+                    }
+                    updateRelayUI();
+                }
+                // 你也可以在這裡處理馬達的回報（若設備會回報）
+            }
+
+            function onFailure(responseObject) {
+                console.error("連線失敗: " + responseObject.errorMessage);
+                isConnected = false;
+                showNotification("連線失敗，請檢查 Broker 設定或網路。");
+                updateUI();
+            }
+
+            // --- 核心功能 ---
+            function connect() {
+                if (isConnected) return;
+                console.log(`正在連線至 wss://${MQTT_BROKER}:${MQTT_PORT}`);
+                statusLabel.textContent = '連線中...';
+                statusLabel.className = 'status-connecting';
+                
+                client = new Paho.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+                client.connect({
+                    onSuccess: onConnect,
+                    onFailure: onFailure,
+                    useSSL: true
+                });
+            }
+
+            function disconnect() {
+                if (!isConnected) return;
+                console.log("正在斷開連線...");
+                client.disconnect();
+                isConnected = false;
+                updateUI();
+            }
+
+            function publishMessage(topic, payload, retained=false, qos=0) {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+                const message = new Paho.Message(payload);
+                message.destinationName = topic;
+                message.retained = retained;
+                message.qos = qos;
+                client.send(message);
+                console.log(`已發布訊息: Topic=${topic}, Payload=${payload}, Retained=${retained}, QoS=${qos}`);
+            }
+
+            function handleMotorControl(motor, action) {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+                const topic = (motor === '1') ? TOPIC_MOTOR1 : TOPIC_MOTOR2;
+                let payload = '0'; 
+                const currentState = motorStates[motor];
+                const actionValue = (action === 'forward') ? 1 : 2;
+                if (currentState === actionValue) {
+                    motorStates[motor] = 0;
+                    payload = '0';
+                } else {
+                    motorStates[motor] = actionValue;
+                    payload = (action === 'forward') ? '1' : '2';
+                }
+                publishMessage(topic, payload);
+                updateUI();
+            }
+
+            // ===== [Relay] 相關函式 =====
+            function updateRelayUI() {
+                // 狀態點與文字
+                relayStatusEl.classList.remove('on', 'off');
+                if (relayState === true) {
+                    relayStatusEl.classList.add('on');
+                    relayStatusText.textContent = 'ON';
+                    relayToggleBtn.classList.add('on');
+                    relayToggleBtn.textContent = '切換為 OFF';
+                } else if (relayState === false) {
+                    relayStatusEl.classList.add('off');
+                    relayStatusText.textContent = 'OFF';
+                    relayToggleBtn.classList.remove('on');
+                    relayToggleBtn.textContent = '切換為 ON';
+                } else {
+                    relayStatusText.textContent = '未知（等待狀態）';
+                    relayToggleBtn.classList.remove('on');
+                    relayToggleBtn.textContent = '切換 ON / OFF';
+                }
+                relayToggleBtn.disabled = !isConnected;
+            }
+
+            function toggleRelay() {
+                if (!isConnected) {
+                    showNotification("沒有成功連線MQTT");
+                    return;
+                }
+                // 若 ESP8266 有支援 "TOGGLE"，你也可以直接送 "TOGGLE"
+                // 這裡我們用明確 ON/OFF，並幫你帶 retained，讓下一次前端能讀到最新狀態
+                const nextState = !(relayState === true);
+                const payload = nextState ? "ON" : "OFF";
+                publishMessage(TOPIC_RELAY_CMD, payload, true, 0);
+                // 前端先行預顯示，等裝置回報再同步
+                relayState = nextState;
+                updateRelayUI();
+            }
+
+            // --- UI 更新與輔助 ---
+            function updateUI() {
+                if (isConnected) {
+                    statusLabel.textContent = '已連線';
+                    statusLabel.className = 'status-connected';
+                    connectBtn.textContent = '斷開連線';
+                    connectBtn.classList.add('connected');
+                } else {
+                    if (statusLabel.className !== 'status-connecting') {
+                        statusLabel.textContent = '尚未連線';
+                        statusLabel.className = 'status-disconnected';
+                    }
+                    connectBtn.textContent = '連線';
+                    connectBtn.classList.remove('connected');
+                }
+
+                motorButtons.forEach(btn => {
+                    btn.disabled = !isConnected;
+                    if (isConnected) {
+                        const motor = btn.dataset.motor;
+                        const action = btn.dataset.action;
+                        const currentState = motorStates[motor];
+                        const actionValue = (action === 'forward')? 1 : 2;
+
+                        if (currentState === actionValue) {
+                            btn.textContent = `${motor}號停止`;
+                            btn.classList.add('stop');
+                        } else {
+                            btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                            btn.classList.remove('stop');
+                        }
+                    } else {
+                        const motor = btn.dataset.motor;
+                        const action = btn.dataset.action;
+                        btn.textContent = `${motor}號${action === 'forward'? '正轉' : '反轉'}`;
+                        btn.classList.remove('stop');
+                    }
+                });
+
+                // [Relay] 跟著更新
+                updateRelayUI();
+            }
+            
+            let notificationTimer;
+            function showNotification(message) {
+                notification.textContent = message;
+                notification.classList.add('show');
+                clearTimeout(notificationTimer);
+                notificationTimer = setTimeout(() => {
+                    notification.classList.remove('show');
+                }, 3000);
+            }
+
+            // --- 事件監聽器 ---
+            connectBtn.addEventListener('click', () => {
+                if (isConnected) disconnect();
+                else connect();
+            });
+
+            motorButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    handleMotorControl(btn.dataset.motor, btn.dataset.action);
+                });
+            });
+
+            // [Relay] 切換
+            relayToggleBtn.addEventListener('click', toggleRelay);
+
+            // --- 初始呼叫 ---
+            updateUI();
+        });
+    </script>
+
+</body>
+</html>
