@@ -10,8 +10,8 @@
     body { margin:0; padding:20px; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
     .wrap { max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
     .card { background:var(--card); border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.08); padding:20px; }
-    h1 { font-size:1.4rem; margin:0 0 12px; color:#1a237e; }
-    h2 { font-size:1.05rem; margin:0 0 12px; color:#455a64; }
+    h1 { font-size:1.35rem; margin:0 0 12px; color:#1a237e; }
+    h2 { font-size:1.05rem; margin:12px 0; color:#455a64; }
     .row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
     label { font-size:.9rem; color:#455a64; display:block; margin:8px 0 6px; }
     input[type="text"],input[type="number"],input[type="password"]{
@@ -40,19 +40,64 @@
 </head>
 <body>
   <div class="wrap">
-    <!-- ====== 馬達：原本的區塊（獨立 MQTT 連線） ====== -->
+    <!-- ====== 馬達：獨立設定＋獨立連線 ====== -->
     <div class="card">
       <h1>總控馬達（獨立 MQTT 連線）</h1>
-      <div style="margin:8px 0;">
-        狀態：<span id="motorConn" class="status bad">尚未連線</span>
+      <div class="row">
+        <div>
+          <label>Broker</label>
+          <input id="mot_broker" type="text" placeholder="e.g. test.mosquitto.org"/>
+        </div>
+        <div>
+          <label>WebSocket Port</label>
+          <input id="mot_port" type="number" placeholder="e.g. 8081"/>
+        </div>
       </div>
-      <div class="inline" style="gap:10px; margin-bottom:8px;">
-        <button id="motorConnect">馬達連線</button>
-        <button id="motorDisconnect" class="danger" disabled>馬達斷線</button>
+      <div class="row">
+        <div>
+          <label>MQTT User（可留空）</label>
+          <input id="mot_user" type="text"/>
+        </div>
+        <div>
+          <label>MQTT Pass（可留空）</label>
+          <input id="mot_pass" type="password"/>
+        </div>
       </div>
-      <div class="hint" id="motorInfo"></div>
+      <div class="row">
+        <div>
+          <label>Motor1 Topic</label>
+          <input id="mot_topic1" type="text" placeholder="ttu_fish/motor1"/>
+        </div>
+        <div>
+          <label>Motor2 Topic</label>
+          <input id="mot_topic2" type="text" placeholder="ttu_fish/motor2"/>
+        </div>
+      </div>
+      <div class="row">
+        <div class="inline">
+          <input id="mot_tls" type="checkbox"/>
+          <label for="mot_tls">使用 TLS（WSS）</label>
+        </div>
+        <div>
+          <label>WebSocket Path</label>
+          <input id="mot_path" type="text" placeholder="/mqtt"/>
+        </div>
+      </div>
+      <div class="inline" style="gap:10px; margin-top:8px;">
+        <button id="mot_save" class="secondary">儲存設定</button>
+        <button id="mot_reset" class="secondary">清空設定</button>
+      </div>
 
       <hr style="margin:16px 0; border:none; border-top:1px solid #eee;"/>
+      <div style="margin:8px 0;">
+        狀態：<span id="mot_conn" class="status bad">尚未連線</span>
+      </div>
+      <div class="inline" style="gap:10px; margin-bottom:8px;">
+        <button id="mot_connect">馬達連線</button>
+        <button id="mot_disconnect" class="danger" disabled>馬達斷線</button>
+      </div>
+      <div class="hint" id="mot_info"></div>
+
       <h2>控制</h2>
       <div class="inline" style="gap:10px; margin-bottom:6px;">
         <button class="secondary" id="btn-fwd-1" data-motor="1" data-action="forward" disabled>1號正轉</button>
@@ -61,12 +106,11 @@
         <button class="secondary" id="btn-rev-2" data-motor="2" data-action="reverse" disabled>2號反轉</button>
       </div>
       <p class="hint">
-        馬達主題：<code>ttu_fish/motor1</code>, <code>ttu_fish/motor2</code><br/>
-        （如需自訂，請改動程式內常數）
+        發佈 Payload：<code>1</code>=正轉，<code>2</code>=反轉，<code>0</code>=停止（命令不保留）。
       </p>
     </div>
 
-    <!-- ====== 繼電器：獨立的 MQTT 連線與設定 ====== -->
+    <!-- ====== 繼電器：獨立設定＋獨立連線 ====== -->
     <div class="card">
       <h1>繼電器（獨立 MQTT 連線）</h1>
       <div class="row">
@@ -125,7 +169,7 @@
       </div>
       <div class="hint" id="rel_info"></div>
 
-      <h2 style="margin-top:14px;">Relay 狀態</h2>
+      <h2>Relay 狀態</h2>
       <div style="font-size:1.1rem; margin:6px 0 12px;">
         <span id="rel_dot" class="dot"></span>
         <span id="rel_text">未知（等待狀態）</span>
@@ -153,21 +197,31 @@
   </div>
 
   <script>
-    // =========================================
-    // 馬達：使用獨立客戶端 clientMotor
-    // =========================================
-    const MOTOR_BROKER = "test.mosquitto.org";
-    const MOTOR_PORT   = 8081;     // WSS
-    const MOTOR_USESSL = true;
-    const MOTOR_PATH   = "/mqtt";
-    const TOPIC_MOTOR1 = "ttu_fish/motor1";
-    const TOPIC_MOTOR2 = "ttu_fish/motor2";
+    // =========================
+    // 共用：localStorage 工具
+    // =========================
+    function saveLS(key, obj){ localStorage.setItem(key, JSON.stringify(obj)); }
+    function loadLS(key, fallback={}){ try{ return JSON.parse(localStorage.getItem(key)||'{}'); }catch{ return fallback; } }
 
-    const mEls = {
-      conn: document.getElementById('motorConn'),
-      info: document.getElementById('motorInfo'),
-      btnConnect: document.getElementById('motorConnect'),
-      btnDisconnect: document.getElementById('motorDisconnect'),
+    // =========================================
+    // 馬達：獨立設定（LS key: mqtt-motor-ui）+ 獨立客戶端
+    // =========================================
+    const LS_MOT = 'mqtt-motor-ui';
+    const motEls = {
+      broker: document.getElementById('mot_broker'),
+      port: document.getElementById('mot_port'),
+      user: document.getElementById('mot_user'),
+      pass: document.getElementById('mot_pass'),
+      topic1: document.getElementById('mot_topic1'),
+      topic2: document.getElementById('mot_topic2'),
+      tls: document.getElementById('mot_tls'),
+      path: document.getElementById('mot_path'),
+      save: document.getElementById('mot_save'),
+      reset: document.getElementById('mot_reset'),
+      conn: document.getElementById('mot_conn'),
+      info: document.getElementById('mot_info'),
+      connect: document.getElementById('mot_connect'),
+      disconnect: document.getElementById('mot_disconnect'),
       btns: [
         document.getElementById('btn-fwd-1'),
         document.getElementById('btn-rev-1'),
@@ -175,47 +229,70 @@
         document.getElementById('btn-rev-2'),
       ],
     };
-    let clientMotor = null;
-    let motorConnected = false;
-    const motorStates = { '1':0, '2':0 }; // 0 stop, 1 fwd, 2 rev
+    let clientMotor=null, motorConnected=false;
+    const motorStates={ '1':0, '2':0 };
 
-    function setMotorUI(connected){
-      motorConnected = connected;
-      mEls.conn.textContent = connected ? '已連線' : '尚未連線';
-      mEls.conn.className = 'status ' + (connected ? 'ok' : 'bad');
-      mEls.btnConnect.disabled = connected;
-      mEls.btnDisconnect.disabled = !connected;
-      mEls.btns.forEach(b=> b.disabled = !connected);
+    function loadMot(){
+      const s = loadLS(LS_MOT);
+      motEls.broker.value = s.broker ?? 'test.mosquitto.org';
+      motEls.port.value   = s.port ?? 8081;
+      motEls.user.value   = s.user ?? '';
+      motEls.pass.value   = s.pass ?? '';
+      motEls.topic1.value = s.topic1 ?? 'ttu_fish/motor1';
+      motEls.topic2.value = s.topic2 ?? 'ttu_fish/motor2';
+      motEls.tls.checked  = s.useSSL ?? true;
+      motEls.path.value   = s.wsPath ?? '/mqtt';
     }
-    function flashMotorInfo(msg){ mEls.info.textContent = msg; setTimeout(()=>mEls.info.textContent='',2500); }
+    function saveMot(){
+      const s = {
+        broker: motEls.broker.value.trim(),
+        port: parseInt(motEls.port.value,10)||0,
+        user: motEls.user.value,
+        pass: motEls.pass.value,
+        topic1: motEls.topic1.value.trim(),
+        topic2: motEls.topic2.value.trim(),
+        useSSL: !!motEls.tls.checked,
+        wsPath: motEls.path.value.trim() || '/mqtt',
+      };
+      saveLS(LS_MOT, s);
+      flashMot('設定已儲存');
+    }
+    function resetMot(){ localStorage.removeItem(LS_MOT); loadMot(); flashMot('設定已恢復預設'); }
+    function flashMot(msg){ motEls.info.textContent=msg; setTimeout(()=>motEls.info.textContent='',2500); }
+
+    function setMotUI(ok){
+      motorConnected = ok;
+      motEls.conn.textContent = ok ? '已連線' : '尚未連線';
+      motEls.conn.className = 'status ' + (ok ? 'ok' : 'bad');
+      motEls.connect.disabled = ok;
+      motEls.disconnect.disabled = !ok;
+      motEls.btns.forEach(b=> b.disabled = !ok);
+    }
 
     function motorConnect(){
-      clientMotor = new Paho.Client(MOTOR_BROKER, Number(MOTOR_PORT), MOTOR_PATH, 'web_motor_'+Math.floor(Math.random()*999999));
-      clientMotor.onConnectionLost = (res)=>{
-        setMotorUI(false);
-        if(res.errorCode!==0) flashMotorInfo('連線丟失：'+res.errorMessage);
+      const s = loadLS(LS_MOT);
+      if(!s.broker || !s.port){ flashMot('請先完成馬達連線設定'); return; }
+      clientMotor = new Paho.Client(s.broker, Number(s.port), (s.wsPath||'/mqtt'), 'web_motor_'+Math.floor(Math.random()*999999));
+      clientMotor.onConnectionLost = (res)=>{ setMotUI(false); if(res.errorCode!==0) flashMot('連線丟失：'+res.errorMessage); };
+      clientMotor.onMessageArrived = ()=>{}; // 如需回報可擴充
+      const opts = {
+        useSSL: !!s.useSSL, timeout: 8,
+        onSuccess: ()=>{ setMotUI(true); flashMot(`已連線（${s.useSSL?'WSS':'WS'}://${s.broker}:${s.port}${s.wsPath||'/mqtt'}）`); },
+        onFailure: (err)=>{ setMotUI(false); flashMot('連線失敗：'+(err.errorMessage||'unknown')); }
       };
-      clientMotor.onMessageArrived = ()=>{}; //可擴充回報
-      clientMotor.connect({
-        useSSL: MOTOR_USESSL,
-        timeout: 8,
-        onSuccess: ()=>{
-          setMotorUI(true);
-          flashMotorInfo(`已連線（WSS://${MOTOR_BROKER}:${MOTOR_PORT}${MOTOR_PATH}）`);
-        },
-        onFailure: (err)=>{
-          setMotorUI(false);
-          flashMotorInfo('連線失敗：'+(err.errorMessage||'unknown'));
-        }
-      });
+      if(s.user) opts.userName = s.user;
+      if(s.pass) opts.password = s.pass;
+      clientMotor.connect(opts);
     }
-    function motorDisconnect(){ try{clientMotor && clientMotor.disconnect();}catch(e){} setMotorUI(false); }
+    function motorDisconnect(){ try{clientMotor && clientMotor.disconnect();}catch(e){} setMotUI(false); }
     function motorPublish(topic,payload){
-      if(!motorConnected || !clientMotor){ flashMotorInfo('尚未連線'); return; }
+      if(!motorConnected || !clientMotor){ flashMot('尚未連線'); return; }
       const m = new Paho.Message(payload); m.destinationName = topic; m.retained=false; m.qos=0; clientMotor.send(m);
     }
     function handleMotor(motor,action){
-      const topic = (motor==='1')?TOPIC_MOTOR1:TOPIC_MOTOR2;
+      const s = loadLS(LS_MOT);
+      const topic = (motor==='1') ? (s.topic1||'') : (s.topic2||'');
+      if(!topic){ flashMot('未設定 Motor Topic'); return; }
       const current = motorStates[motor];
       const actionValue = (action==='forward')?1:2;
       let payload='0';
@@ -224,18 +301,20 @@
       motorPublish(topic,payload);
     }
 
-    mEls.btnConnect.addEventListener('click', motorConnect);
-    mEls.btnDisconnect.addEventListener('click', motorDisconnect);
-    mEls.btns.forEach(btn=>{
+    motEls.save.addEventListener('click', saveMot);
+    motEls.reset.addEventListener('click', resetMot);
+    motEls.connect.addEventListener('click', motorConnect);
+    motEls.disconnect.addEventListener('click', motorDisconnect);
+    motEls.btns.forEach(btn=>{
       btn.addEventListener('click', ()=> handleMotor(btn.dataset.motor, btn.dataset.action));
     });
-    setMotorUI(false);
+    loadMot(); setMotUI(false);
 
     // =========================================
-    // 繼電器：使用獨立客戶端 clientRelay
+    // 繼電器：獨立設定（LS key: mqtt-relay-ui）+ 獨立客戶端
     // =========================================
     const LS_REL = 'mqtt-relay-ui';
-    const rEls = {
+    const relEls = {
       broker: document.getElementById('rel_broker'),
       port: document.getElementById('rel_port'),
       user: document.getElementById('rel_user'),
@@ -258,64 +337,62 @@
       off: document.getElementById('rel_off'),
       toggle: document.getElementById('rel_toggle'),
     };
-    let clientRelay = null;
-    let relayConnected = false;
-    let relayState = null; // true/false/null
+    let clientRelay=null, relayConnected=false, relayState=null;
 
     function loadRel(){
-      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
-      rEls.broker.value = s.broker ?? 'test.mosquitto.org';
-      rEls.port.value   = s.port ?? 8081;
-      rEls.user.value   = s.user ?? '';
-      rEls.pass.value   = s.pass ?? '';
-      rEls.topicCmd.value = s.topicCmd ?? 'ttu_fish/relay/cmd';
-      rEls.topicStatus.value = s.topicStatus ?? 'ttu_fish/relay/status';
-      rEls.tls.checked  = s.useSSL ?? true;
-      rEls.path.value   = s.wsPath ?? '/mqtt';
+      const s = loadLS(LS_REL);
+      relEls.broker.value = s.broker ?? 'test.mosquitto.org';
+      relEls.port.value   = s.port ?? 8081;
+      relEls.user.value   = s.user ?? '';
+      relEls.pass.value   = s.pass ?? '';
+      relEls.topicCmd.value = s.topicCmd ?? 'ttu_fish/relay/cmd';
+      relEls.topicStatus.value = s.topicStatus ?? 'ttu_fish/relay/status';
+      relEls.tls.checked  = s.useSSL ?? true;
+      relEls.path.value   = s.wsPath ?? '/mqtt';
       reflectRelTopics();
     }
     function saveRel(){
       const s = {
-        broker: rEls.broker.value.trim(),
-        port: parseInt(rEls.port.value,10) || 0,
-        user: rEls.user.value,
-        pass: rEls.pass.value,
-        topicCmd: rEls.topicCmd.value.trim(),
-        topicStatus: rEls.topicStatus.value.trim(),
-        useSSL: !!rEls.tls.checked,
-        wsPath: rEls.path.value.trim() || '/mqtt',
+        broker: relEls.broker.value.trim(),
+        port: parseInt(relEls.port.value,10)||0,
+        user: relEls.user.value,
+        pass: relEls.pass.value,
+        topicCmd: relEls.topicCmd.value.trim(),
+        topicStatus: relEls.topicStatus.value.trim(),
+        useSSL: !!relEls.tls.checked,
+        wsPath: relEls.path.value.trim() || '/mqtt',
       };
-      localStorage.setItem(LS_REL, JSON.stringify(s));
+      saveLS(LS_REL, s);
       reflectRelTopics();
       flashRel('設定已儲存');
     }
     function resetRel(){ localStorage.removeItem(LS_REL); loadRel(); flashRel('設定已恢復預設'); }
     function reflectRelTopics(){
-      rEls.showCmd.textContent = rEls.topicCmd.value.trim();
-      rEls.showStatus.textContent = rEls.topicStatus.value.trim();
+      relEls.showCmd.textContent = relEls.topicCmd.value.trim();
+      relEls.showStatus.textContent = relEls.topicStatus.value.trim();
     }
-    function flashRel(msg){ rEls.info.textContent=msg; setTimeout(()=>rEls.info.textContent='',2500); }
+    function flashRel(msg){ relEls.info.textContent=msg; setTimeout(()=>relEls.info.textContent='',2500); }
 
     function setRelConnUI(ok){
       relayConnected = ok;
-      rEls.conn.textContent = ok ? '已連線' : '尚未連線';
-      rEls.conn.className = 'status ' + (ok ? 'ok':'bad');
-      rEls.connect.disabled = ok;
-      rEls.disconnect.disabled = !ok;
-      rEls.on.disabled = !ok;
-      rEls.off.disabled = !ok;
-      rEls.toggle.disabled = !ok;
+      relEls.conn.textContent = ok ? '已連線' : '尚未連線';
+      relEls.conn.className = 'status ' + (ok ? 'ok':'bad');
+      relEls.connect.disabled = ok;
+      relEls.disconnect.disabled = !ok;
+      relEls.on.disabled = !ok;
+      relEls.off.disabled = !ok;
+      relEls.toggle.disabled = !ok;
     }
     function setRelStateUI(state){
       relayState = state;
-      rEls.dot.classList.remove('on','off');
-      if(state===true){ rEls.dot.classList.add('on'); rEls.text.textContent='ON'; }
-      else if(state===false){ rEls.dot.classList.add('off'); rEls.text.textContent='OFF'; }
-      else { rEls.text.textContent='未知（等待狀態）'; }
+      relEls.dot.classList.remove('on','off');
+      if(state===true){ relEls.dot.classList.add('on'); relEls.text.textContent='ON'; }
+      else if(state===false){ relEls.dot.classList.add('off'); relEls.text.textContent='OFF'; }
+      else { relEls.text.textContent='未知（等待狀態）'; }
     }
 
     function relConnect(){
-      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
+      const s = loadLS(LS_REL);
       if(!s.broker || !s.port){ flashRel('請先完成繼電器連線設定'); return; }
       clientRelay = new Paho.Client(s.broker, Number(s.port), (s.wsPath||'/mqtt'), 'web_relay_'+Math.floor(Math.random()*999999));
       clientRelay.onConnectionLost = (res)=>{ setRelConnUI(false); setRelStateUI(null); if(res.errorCode!==0) flashRel('連線丟失：'+res.errorMessage); };
@@ -327,8 +404,7 @@
         }
       };
       const opts = {
-        useSSL: !!s.useSSL,
-        timeout: 8,
+        useSSL: !!s.useSSL, timeout: 8,
         onSuccess: ()=>{
           setRelConnUI(true);
           const st = (s.topicStatus||'').trim();
@@ -345,7 +421,7 @@
 
     function relPublishCmd(payload){
       if(!relayConnected || !clientRelay){ flashRel('尚未連線'); return; }
-      const s = JSON.parse(localStorage.getItem(LS_REL)||'{}');
+      const s = loadLS(LS_REL);
       const cTopic = (s.topicCmd||'').trim();
       if(!cTopic){ flashRel('未設定 Command Topic'); return; }
       const m = new Paho.Message(payload);
@@ -353,22 +429,30 @@
       m.retained = false; // 命令不保留，避免重放
       m.qos = 0;
       clientRelay.send(m);
-      // 樂觀更新，最終以裝置回報為準
+      // 樂觀更新，最終以裝置回報為準（ESP 會 retained 狀態）
       if(payload==='ON'||payload==='1') setRelStateUI(true);
       else if(payload==='OFF'||payload==='0') setRelStateUI(false);
       flashRel(`已發佈：${cTopic} → ${payload}`);
     }
 
-    rEls.save.addEventListener('click', saveRel);
-    rEls.reset.addEventListener('click', resetRel);
-    rEls.connect.addEventListener('click', relConnect);
-    rEls.disconnect.addEventListener('click', relDisconnect);
-    rEls.on.addEventListener('click', ()=> relPublishCmd('ON'));
-    rEls.off.addEventListener('click', ()=> relPublishCmd('OFF'));
-    rEls.toggle.addEventListener('click', ()=> relPublishCmd('TOGGLE'));
-    loadRel();
-    setRelConnUI(false);
-    setRelStateUI(null);
+    // 綁定事件 & 初始
+    motEls.save.addEventListener('click', saveMot);
+    motEls.reset.addEventListener('click', resetMot);
+    motEls.connect.addEventListener('click', motorConnect);
+    motEls.disconnect.addEventListener('click', motorDisconnect);
+    motEls.btns.forEach(btn=>{
+      btn.addEventListener('click', ()=> handleMotor(btn.dataset.motor, btn.dataset.action));
+    });
+    loadMot(); setMotUI(false);
+
+    relEls.save.addEventListener('click', saveRel);
+    relEls.reset.addEventListener('click', resetRel);
+    relEls.connect.addEventListener('click', relConnect);
+    relEls.disconnect.addEventListener('click', relDisconnect);
+    relEls.on.addEventListener('click', ()=> relPublishCmd('ON'));
+    relEls.off.addEventListener('click', ()=> relPublishCmd('OFF'));
+    relEls.toggle.addEventListener('click', ()=> relPublishCmd('TOGGLE'));
+    loadRel(); setRelConnUI(false); setRelStateUI(null);
   </script>
 </body>
 </html>
