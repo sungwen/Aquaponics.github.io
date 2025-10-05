@@ -52,6 +52,7 @@
         button:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.7; }
         #connect-btn { grid-column: 1 / -1; background-color: #1976d2; }
         #connect-btn.connected { background-color: #c62828; }
+
         .motor-btn { background-color: #00796b; }
         .motor-btn.stop { background-color: #fbc02d; color: #333; }
 
@@ -165,6 +166,7 @@
         <div class="inline" style="justify-content:space-between;">
             <div>連線狀態：<span id="rel_conn" class="status-disconnected">尚未連線</span></div>
             <div class="inline" style="gap:10px;">
+                <!-- 這顆按鈕會依狀態自動變色與文字 -->
                 <button id="rel_connect">繼電器連線</button>
                 <button id="rel_disconnect" class="btn-danger" disabled>繼電器斷線</button>
             </div>
@@ -211,7 +213,7 @@
 
             let client;           // 馬達 client
             let isConnected = false;
-            let motorStates = { '1': 0, '2': 0 }; // 0: stop, 1: forward, 2: reverse
+            let motorStates = { '1': 0, '2': 0 };
 
             const connectBtn = document.getElementById('connect-btn');
             const statusLabel = document.getElementById('status-label');
@@ -349,6 +351,8 @@
                 relEls.tls.checked  = s.useSSL ?? true;
                 relEls.topic.value  = s.topic ?? 'ttu_fish/relay';
                 relEls.topicShow.textContent = relEls.topic.value.trim();
+                // 讓「繼電器連線」按鈕一開始就亮著
+                setRelUI(false);
             }
             function saveRel() {
                 const s = {
@@ -369,16 +373,28 @@
                 loadRel();
                 toastRel('設定已恢復預設');
             }
+
+            // ✅ 修正版：未連線時「繼電器連線」必定可按且亮起
             function setRelUI(connected) {
                 relConnected = connected;
                 relEls.conn.className = connected ? 'status-connected' : 'status-disconnected';
                 relEls.conn.textContent = connected ? '已連線' : '尚未連線';
-                relEls.connect.disabled = connected;
+
+                // 連線鍵：未連線→綠色可按；已連線→紅色且顯示「已連線中」
+                relEls.connect.disabled = false;
+                relEls.connect.classList.toggle('btn-on', !connected);
+                relEls.connect.classList.toggle('btn-danger', connected);
+                relEls.connect.textContent = connected ? '已連線中' : '繼電器連線';
+
+                // 斷線鍵：僅已連線時可按
                 relEls.disconnect.disabled = !connected;
+
+                // 控制鍵：僅已連線時可按
                 relEls.on.disabled = !connected;
                 relEls.off.disabled = !connected;
                 relEls.toggle.disabled = !connected;
             }
+
             function setRelStateUI(state) {
                 relState = state;
                 relEls.dot.classList.remove('on','off');
@@ -387,11 +403,10 @@
                 else { relEls.text.textContent = '未知（等待狀態）'; }
             }
             function toastRel(msg) {
-                // 復用上面的通知條
                 notification.textContent = `繼電器：${msg}`;
                 notification.classList.add('show');
                 clearTimeout(notificationTimer);
-                notificationTimer = setTimeout(() => notification.classList.remove('show'), 2500);
+                notificationTimer = setTimeout(() => notification.classList.remove('show'), 2000);
             }
 
             function relConnect() {
@@ -401,7 +416,6 @@
                     return;
                 }
                 const cid = 'web_relay_' + Math.floor(Math.random()*1e6);
-                // 使用帶 path 的建構子（四參數）
                 relClient = new Paho.Client(s.broker, Number(s.port), (s.wsPath || '/mqtt'), cid);
                 relClient.onConnectionLost = (res) => {
                     setRelUI(false);
@@ -446,7 +460,7 @@
                 if (!topic) return toastRel('未設定 Topic');
                 const msg = new Paho.Message(payload);
                 msg.destinationName = topic;
-                msg.retained = false; // 命令不保留，避免重播
+                msg.retained = false; // 命令不保留
                 msg.qos = 0;
                 relClient.send(msg);
                 // 樂觀更新（最終以裝置回報為準）
@@ -464,9 +478,8 @@
             document.getElementById('rel_off').addEventListener('click', () => relPublish('OFF'));
             document.getElementById('rel_toggle').addEventListener('click', () => relPublish('TOGGLE'));
 
-            // 初始化
+            // 初始化：載入設定並把「連線」按鈕亮起
             loadRel();
-            setRelUI(false);
             setRelStateUI(null);
         });
     </script>
