@@ -72,13 +72,12 @@
     .dot.on { background:#2e7d32; }
     .dot.off { background:#b71c1c; }
 
-    .btn-on { background:#2e7d32; }     /* 綠色：未連線可按 */
+    .btn-on { background:#2e7d32; }     /* 綠色：未連線 */
     .btn-wait { background:#f57c00; }   /* 橘色：連線中 */
-    .btn-danger { background:#c62828; } /* 紅色：已連線 */
+    .btn-danger { background:#c62828; } /* 紅色：已連線（作為斷線鍵） */
     .btn-off { background:#b71c1c; }
     .btn-toggle { background:#455a64; }
     .btn-secondary { background:#455a64; }
-    .btn-danger-plain { background:#c62828; }
     code { background:#eef3f7; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
@@ -127,9 +126,8 @@
     <div class="inline" style="justify-content:space-between;">
       <div>連線狀態：<span id="rel_conn" class="status-disconnected">尚未連線</span></div>
       <div class="inline" style="gap:10px;">
-        <!-- 三段式：未連線(綠)/連線中(橘)/已連線(紅) -->
-        <button id="rel_connect" class="btn-on">繼電器連線</button>
-        <button id="rel_disconnect" class="btn-danger-plain" disabled>繼電器斷線</button>
+        <!-- 單顆切換鍵：未連線(綠)/連線中(橘)/已連線→顯示「繼電器斷線」(紅) -->
+        <button id="rel_conn_btn" class="btn-on">繼電器連線</button>
       </div>
     </div>
 
@@ -272,7 +270,7 @@
       updateUI();
 
       // =========================
-      // 繼電器（第二個 Paho client，獨立連線）
+      // 繼電器（第二個 Paho client，獨立連線 + 單鍵切換）
       // =========================
       const LS_REL = 'mqtt-relay-ui';
       const relEls = {
@@ -286,8 +284,7 @@
         save: document.getElementById('rel_save'),
         reset: document.getElementById('rel_reset'),
         conn: document.getElementById('rel_conn'),
-        connect: document.getElementById('rel_connect'),
-        disconnect: document.getElementById('rel_disconnect'),
+        connBtn: document.getElementById('rel_conn_btn'),
         dot: document.getElementById('rel_dot'),
         text: document.getElementById('rel_text'),
         on: document.getElementById('rel_on'),
@@ -310,7 +307,7 @@
         relEls.tls.checked  = s.useSSL ?? true;
         relEls.topic.value  = s.topic ?? 'ttu_fish/relay';
         relEls.topicShow.textContent = relEls.topic.value.trim();
-        setRelUI('disconnected'); // 讓連線按鈕一開始就亮著
+        setRelUI('disconnected'); // 一開始讓連線鍵可按
       }
       function saveRel() {
         const s = {
@@ -341,21 +338,19 @@
           status === 'connected' ? '已連線' :
           status === 'connecting' ? '連線中...' : '尚未連線';
 
+        // 單鍵切換：依狀態改變樣式/文字/可用性
         if (status === 'disconnected') {
-          relEls.connect.disabled = false;
-          relEls.connect.className = 'btn-on';
-          relEls.connect.textContent = '繼電器連線';
-          relEls.disconnect.disabled = true;
+          relEls.connBtn.disabled = false;
+          relEls.connBtn.className = 'btn-on';
+          relEls.connBtn.textContent = '繼電器連線';
         } else if (status === 'connecting') {
-          relEls.connect.disabled = true;
-          relEls.connect.className = 'btn-wait';
-          relEls.connect.textContent = '連線中...';
-          relEls.disconnect.disabled = true;
+          relEls.connBtn.disabled = true;
+          relEls.connBtn.className = 'btn-wait';
+          relEls.connBtn.textContent = '連線中...';
         } else { // connected
-          relEls.connect.disabled = false;
-          relEls.connect.className = 'btn-danger';
-          relEls.connect.textContent = '已連線中';
-          relEls.disconnect.disabled = false;
+          relEls.connBtn.disabled = false;
+          relEls.connBtn.className = 'btn-danger';
+          relEls.connBtn.textContent = '繼電器斷線';
         }
 
         const enable = (status === 'connected');
@@ -385,7 +380,6 @@
         if (relConnected) return;
         setRelUI('connecting');
         const cid = 'web_relay_' + Math.floor(Math.random()*1e6);
-        // 使用四參數建構子指定 path
         relClient = new Paho.Client(s.broker, Number(s.port), (s.wsPath || '/mqtt'), cid);
         relClient.onConnectionLost = (res) => {
           relConnected = false;
@@ -424,6 +418,7 @@
         relConnected = false;
         setRelUI('disconnected');
         setRelStateUI(null);
+        toastRel('已斷線');
       }
 
       function relPublish(payload) {
@@ -442,11 +437,15 @@
         toastRel(`已發佈：${topic} → ${payload}`);
       }
 
-      // 綁定事件
+      // 單鍵切換事件
+      relEls.connBtn.addEventListener('click', () => {
+        if (relConnected) relDisconnect();
+        else relConnect();
+      });
+
+      // 其他事件
       document.getElementById('rel_save').addEventListener('click', saveRel);
       document.getElementById('rel_reset').addEventListener('click', resetRel);
-      document.getElementById('rel_connect').addEventListener('click', relConnect);
-      document.getElementById('rel_disconnect').addEventListener('click', relDisconnect);
       document.getElementById('rel_on').addEventListener('click', () => relPublish('ON'));
       document.getElementById('rel_off').addEventListener('click', () => relPublish('OFF'));
       document.getElementById('rel_toggle').addEventListener('click', () => relPublish('TOGGLE'));
